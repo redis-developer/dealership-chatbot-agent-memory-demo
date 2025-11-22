@@ -6,8 +6,6 @@ from orchestrator import handle_turn
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
-import pandas as pd
-from redisvl import HFTextVectorizer
 
 # Configure logging
 import os
