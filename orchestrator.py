@@ -10,6 +10,7 @@ import operator
 import json
 import re
 import redis
+from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -446,19 +447,96 @@ Only return the JSON object, no other text."""
                 "next_step": "Continue conversation"
             }
 
-# Node 4: advance_stage - update procedural stage
+# Node 4: advance_stage - update procedural stage and suggest test drive
 def advance_stage(state: State) -> State:
     logger.info("Node: advance_stage - Updating procedural stage")
-    # TODO: Add logic to update stage (needs_analysis → shortlist → test_drive → financing ...)
-    return {}
+    
+    current_stage = state.get("stage")
+    model = state.get("model")
+    brand = state.get("brand")
+    
+    # If model is decided and we haven't suggested test drive yet, suggest test drive date
+    if model and current_stage != "test_drive":
+        logger.info(f"Model decided: {brand} {model} - Suggesting test drive date")
+        
+        # Generate test drive date suggestion
+        # Suggest dates: today + 2 days, today + 3 days, today + 5 days
+        today = datetime.now()
+        suggested_dates = [
+            (today + timedelta(days=2)).strftime("%d %B %Y"),  # Day after tomorrow
+            (today + timedelta(days=3)).strftime("%d %B %Y"),  # 3 days from now
+            (today + timedelta(days=5)).strftime("%d %B %Y"),  # 5 days from now
+        ]
+        
+        # Format dates in Indian style
+        date_options = ", ".join([f"{date}" for date in suggested_dates])
+        
+        test_drive_prompt = f"""You are an elegant sales consultant at a premium luxury car showroom in India. The customer has decided on the {brand} {model}. 
+
+Generate a warm, professional message suggesting a test drive with the following available dates: {date_options}.
+
+Guidelines:
+- Use refined Indian English
+- Be enthusiastic but professional
+- Mention the specific model: {brand} {model}
+- Present the dates in a friendly way
+- Suggest they can choose a convenient time
+- Mention that you can arrange a personalized test drive experience
+
+Return ONLY the message text, nothing else. Make it conversational and warm."""
+        
+        try:
+            response_obj = llm.invoke(test_drive_prompt)
+            test_drive_message = response_obj.content.strip()
+            
+            # Remove quotes if LLM adds them
+            if test_drive_message.startswith('"') and test_drive_message.endswith('"'):
+                test_drive_message = test_drive_message[1:-1]
+            if test_drive_message.startswith("'") and test_drive_message.endswith("'"):
+                test_drive_message = test_drive_message[1:-1]
+            
+            logger.info(f"Generated test drive suggestion for {brand} {model}")
+            
+            return {
+                "stage": "test_drive",
+                "response": test_drive_message,
+                "rationale": f"Customer decided on {brand} {model}, suggesting test drive dates",
+                "next_step": "Schedule test drive"
+            }
+        except Exception as e:
+            logger.error(f"Error generating test drive suggestion: {str(e)}", exc_info=True)
+            # Fallback message
+            fallback_message = f"Excellent choice! The {brand} {model} is a remarkable vehicle. I'd be delighted to arrange a test drive for you. We have availability on {date_options}. Which date works best for you?"
+            return {
+                "stage": "test_drive",
+                "response": fallback_message,
+                "rationale": "Model decided, suggesting test drive (fallback)",
+                "next_step": "Schedule test drive"
+            }
+    else:
+        # Update stage to next logical step
+        if not current_stage:
+            new_stage = "needs_analysis"
+        elif current_stage == "needs_analysis":
+            new_stage = "shortlist"
+        else:
+            new_stage = current_stage
+        
+        logger.info(f"Advancing stage from {current_stage} to {new_stage}")
+        return {
+            "stage": new_stage
+        }
 
 def route_after_respond(state: State) -> str:
     """Route after respond based on ensure_readiness decision.
     
     If need_clarification is True: loop back to parse_slots to continue asking questions.
     If need_clarification is False: we have all required slots, so advance to next stage.
+    If model is decided: advance to test drive suggestion stage.
     """
     need_clarification = state.get("need_clarification", False)
+    model = state.get("model")
+    current_stage = state.get("stage")
     
     if need_clarification:
         # ensure_readiness determined we need clarification
@@ -466,6 +544,11 @@ def route_after_respond(state: State) -> str:
         # Note: This will wait for user's next message in the next turn
         logger.debug("Looping back to parse_slots (clarification needed)")
         return END  # End this turn, user will respond, then next turn goes through parse_slots again
+    elif model and current_stage != "test_drive":
+        # Model is decided and we haven't suggested test drive yet
+        # Advance to suggest test drive dates
+        logger.debug(f"Model {model} decided - Advancing to test drive suggestion")
+        return "advance_stage"
     else:
         # ensure_readiness determined we're ready (all required slots filled)
         # respond node provided recommendations - advance to next stage
