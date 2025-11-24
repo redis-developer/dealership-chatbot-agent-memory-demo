@@ -1,6 +1,7 @@
 from langchain_openai import ChatOpenAI
 from typing_extensions import TypedDict, Annotated
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.redis import RedisSaver
 from dotenv import load_dotenv
 import os
 import logging
@@ -40,9 +41,32 @@ class State(TypedDict):
     next_step: Optional[str]
 
 
-# Session store to maintain state across turns
-# In production, this should be replaced with a proper database or cache (Redis)
-session_store: dict[str, State] = {}
+# Initialize Redis checkpointer for state persistence
+redis_uri = os.getenv("REDIS_URL") or os.getenv("REDIS_URI")
+checkpointer = None
+checkpointer_cm = None  # Keep reference to context manager
+
+if not redis_uri:
+    logger.warning("REDIS_URL or REDIS_URI not found in environment variables. State persistence will not work.")
+else:
+    try:
+        # Use context manager to call setup() for initialization
+        # This initializes the Redis indices needed for checkpoints
+        # Following the pattern from: https://github.com/redis-developer/langgraph-apps-with-redis
+        with RedisSaver.from_conn_string(redis_uri) as temp_checkpointer:
+            temp_checkpointer.setup()
+            logger.info("Redis checkpointer indices initialized successfully")
+        
+        # Create checkpointer context manager and enter it to get the actual checkpointer object
+        # We need to keep the context manager open for the lifetime of the application
+        # so we store both the context manager and the entered checkpointer
+        checkpointer_cm = RedisSaver.from_conn_string(redis_uri)
+        checkpointer = checkpointer_cm.__enter__()
+        logger.info("Redis checkpointer initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Redis checkpointer: {str(e)}", exc_info=True)
+        checkpointer = None
+        checkpointer_cm = None
 
 # Initialize LLM
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -437,8 +461,15 @@ def build_workflow():
     
     workflow.set_finish_point("advance_stage")
     
-    compiled_graph = workflow.compile()
-    logger.debug("Workflow compiled successfully with conditional routing")
+    # Compile with checkpointer if available
+    # Note: LangGraph's compile() accepts the checkpointer directly
+    if checkpointer:
+        compiled_graph = workflow.compile(checkpointer=checkpointer)
+        logger.debug("Workflow compiled successfully with Redis checkpointer")
+    else:
+        compiled_graph = workflow.compile()
+        logger.warning("Workflow compiled without checkpointer - state will not persist")
+    
     return compiled_graph
 
 
@@ -446,75 +477,75 @@ def build_workflow():
 def handle_turn(session_id: str, user_id: str, message: str) -> str:
     logger.info(f"Handling turn - Session: {session_id}, User: {user_id}, Message length: {len(message)}")
     
-    # Get existing state for this session, or create new one
-    existing_state = session_store.get(session_id)
-    
-    if existing_state:
-        # Merge with existing state - preserve accumulated slots
-        initial_state: State = {
-            "request": message,  # New user message
-            "budget_max": existing_state.get("budget_max"),
-            "seats_min": existing_state.get("seats_min"),
-            "fuel": existing_state.get("fuel"),
-            "body": existing_state.get("body"),
-            "transmission_ban": existing_state.get("transmission_ban", []),
-            "brand": existing_state.get("brand"),
-            "model": existing_state.get("model"),
-            "need_clarification": False,
-            "missing_slots": None,
-            "stage": existing_state.get("stage"),  # Preserve stage
-            "response": None,
-            "rationale": None,
-            "next_step": None,
-        }
-        logger.debug(f"Restored state for session {session_id} - Budget: {initial_state.get('budget_max')}, Body: {initial_state.get('body')}")
-    else:
-        # Initialize new state for this session
-        initial_state: State = {
-            "request": message,
-            "budget_max": None,
-            "seats_min": None,
-            "fuel": None,
-            "body": None,
-            "transmission_ban": [],
-            "brand": None,
-            "model": None,
-            "need_clarification": False,
-            "missing_slots": None,
-            "stage": None,
-            "response": None,
-            "rationale": None,
-            "next_step": None,
-        }
-        logger.debug(f"Created new state for session {session_id}")
+    # Use session_id as thread_id for Redis checkpointer
+    # If session_id is None or empty, use a default
+    thread_id = session_id or f"user_{user_id or 'unknown'}"
     
     try:
         graph = build_workflow()
-        logger.debug(f"Workflow built, invoking with session: {session_id}")
-        final_state = graph.invoke(initial_state)
+        logger.debug(f"Workflow built, invoking with thread_id: {thread_id}")
         
-        # Save state back to session store (excluding temporary fields)
-        session_state: State = {
-            "request": final_state.get("request", message),
-            "budget_max": final_state.get("budget_max"),
-            "seats_min": final_state.get("seats_min"),
-            "fuel": final_state.get("fuel"),
-            "body": final_state.get("body"),
-            "transmission_ban": final_state.get("transmission_ban", []),
-            "brand": final_state.get("brand"),
-            "model": final_state.get("model"),
-            "need_clarification": final_state.get("need_clarification", False),
-            "missing_slots": None,  # Don't persist temporary field
-            "stage": final_state.get("stage"),
-            "response": final_state.get("response"),
-            "rationale": final_state.get("rationale"),
-            "next_step": final_state.get("next_step"),
-        }
-        session_store[session_id] = session_state
+        # Use config with thread_id for state persistence
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        # Get existing state from checkpointer if available
+        existing_state = None
+        if checkpointer:
+            try:
+                # Try to get the current state for this thread
+                checkpoint = graph.get_state(config)
+                if checkpoint and checkpoint.values:
+                    existing_state = checkpoint.values
+                    logger.debug(f"Restored state for thread_id: {thread_id} - Budget: {existing_state.get('budget_max')}, Body: {existing_state.get('body')}")
+            except Exception as e:
+                logger.debug(f"No existing state found for thread_id: {thread_id} (this is normal for new sessions)")
+        
+        # Initialize state - merge with existing state if available
+        if existing_state:
+            # Merge existing state with new request
+            initial_state: State = {
+                "request": message,  # New user message
+                "budget_max": existing_state.get("budget_max"),
+                "seats_min": existing_state.get("seats_min"),
+                "fuel": existing_state.get("fuel"),
+                "body": existing_state.get("body"),
+                "transmission_ban": existing_state.get("transmission_ban", []),
+                "brand": existing_state.get("brand"),
+                "model": existing_state.get("model"),
+                "need_clarification": False,  # Reset for new turn
+                "missing_slots": None,  # Reset temporary field
+                "stage": existing_state.get("stage"),  # Preserve stage
+                "response": None,  # Reset for new turn
+                "rationale": None,  # Reset for new turn
+                "next_step": None,  # Reset for new turn
+            }
+        else:
+            # Initialize new state for this session
+            initial_state: State = {
+                "request": message,
+                "budget_max": None,
+                "seats_min": None,
+                "fuel": None,
+                "body": None,
+                "transmission_ban": [],
+                "brand": None,
+                "model": None,
+                "need_clarification": False,
+                "missing_slots": None,
+                "stage": None,
+                "response": None,
+                "rationale": None,
+                "next_step": None,
+            }
+            logger.debug(f"Created new state for thread_id: {thread_id}")
+        
+        # Invoke the graph - checkpointer is already compiled into the graph
+        # The config with thread_id ensures state is persisted per session
+        final_state = graph.invoke(initial_state, config=config)
         
         response = final_state.get("response", "I'm processing your request.")
         logger.info(f"Turn completed - Session: {session_id}, Response length: {len(response) if response else 0}")
-        logger.debug(f"Saved state for session {session_id} - Budget: {session_state.get('budget_max')}, Body: {session_state.get('body')}")
+        logger.debug(f"State persisted for thread_id: {thread_id} - Budget: {final_state.get('budget_max')}, Body: {final_state.get('body')}")
         return response
     except Exception as e:
         logger.error(f"Error in handle_turn - Session: {session_id}, Error: {str(e)}", exc_info=True)

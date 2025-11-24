@@ -6,6 +6,7 @@ from orchestrator import handle_turn
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
+import uuid
 
 # Configure logging
 import os
@@ -61,15 +62,17 @@ app.add_middleware(
 
 @app.post("/chat")
 def chat_request_handler(chat_request: ChatRequest) -> ChatResponse:
-    session_id = chat_request.session_id or "unknown"
-    user_id = chat_request.user_id or "unknown"
+    # Generate IDs if not provided
+    session_id = chat_request.session_id or f"session_{uuid.uuid4().hex[:16]}"
+    user_id = chat_request.user_id or f"user_{uuid.uuid4().hex[:16]}"
     
     logger.info(f"Received chat request - Session: {session_id}, User: {user_id}, Message: {chat_request.message[:100]}...")
     
     try:
-        response = handle_turn(chat_request.session_id, chat_request.user_id, chat_request.message)
+        # Always pass the generated IDs to handle_turn
+        response = handle_turn(session_id, user_id, chat_request.message)
         logger.info(f"Successfully processed chat request - Session: {session_id}")
-        return ChatResponse(response=response, session_id=chat_request.session_id or session_id)
+        return ChatResponse(response=response, session_id=session_id)
     except Exception as e:
         logger.error(f"Error processing chat request - Session: {session_id}, Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")

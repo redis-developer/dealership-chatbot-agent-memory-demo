@@ -8,23 +8,47 @@ interface Message {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001'
 
+// Generate a unique user ID and store it in localStorage
+const getOrCreateUserId = (): string => {
+  const storedUserId = localStorage.getItem('autoemporium_user_id')
+  if (storedUserId) {
+    return storedUserId
+  }
+  const newUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  localStorage.setItem('autoemporium_user_id', newUserId)
+  return newUserId
+}
+
+// Generate a unique session ID
+const generateSessionId = (): string => {
+  return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+}
+
 const ChatbotButton = () => {
   const { isOpen, openChatbot, closeChatbot } = useChatbot()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionId, setSessionId] = useState<string>(() => {
+    // Initialize session ID from sessionStorage or generate new one
+    const stored = sessionStorage.getItem('autoemporium_session_id')
+    return stored || generateSessionId()
+  })
+  const [userId] = useState<string>(() => getOrCreateUserId())
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (isOpen && messages.length === 0) {
+      // Store session ID in sessionStorage
+      sessionStorage.setItem('autoemporium_session_id', sessionId)
+      
       // Add welcome message when chatbot opens
       setMessages([{
         role: 'assistant',
         content: 'Hello! I\'m your AutoEmporium assistant. How can I help you find your perfect car today?'
       }])
     }
-  }, [isOpen, messages.length])
+  }, [isOpen, messages.length, sessionId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -58,6 +82,7 @@ const ChatbotButton = () => {
         body: JSON.stringify({
           message: userMessage,
           session_id: sessionId,
+          user_id: userId,
         }),
       })
 
@@ -67,9 +92,10 @@ const ChatbotButton = () => {
 
       const data = await response.json()
       
-      // Store session ID if we got one
-      if (data.session_id && !sessionId) {
+      // Update session ID if backend returned a new one
+      if (data.session_id && data.session_id !== sessionId) {
         setSessionId(data.session_id)
+        sessionStorage.setItem('autoemporium_session_id', data.session_id)
       }
 
       // Add assistant response
