@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from langchain_openai import ChatOpenAI
-from orchestrator import handle_turn
+from orchestrator import handle_turn, delete_all_sessions
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
@@ -82,6 +82,40 @@ def chat_request_handler(chat_request: ChatRequest) -> ChatResponse:
 def root():
     """Health check endpoint."""
     return {"status": "ok", "message": "AutoEmporium Chatbot API is running"}
+
+
+class DeleteSessionResponse(BaseModel):
+    success: bool
+    message: str
+
+
+@app.delete("/sessions/all")
+def delete_all_sessions_endpoint() -> DeleteSessionResponse:
+    """Delete ALL Redis checkpoint entries.
+    
+    WARNING: This will delete ALL session states. Use with extreme caution.
+    
+    Returns:
+        DeleteSessionResponse: Success status and message
+    """
+    logger.warning("Delete ALL sessions request received")
+    
+    try:
+        success = delete_all_sessions()
+        if success:
+            return DeleteSessionResponse(
+                success=True,
+                message="All sessions deleted successfully"
+            )
+        else:
+            return DeleteSessionResponse(
+                success=False,
+                message="Failed to delete all sessions"
+            )
+    except Exception as e:
+        logger.error(f"Error deleting all sessions: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error deleting all sessions: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn

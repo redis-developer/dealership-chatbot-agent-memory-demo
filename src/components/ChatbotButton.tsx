@@ -35,6 +35,7 @@ const ChatbotButton = () => {
     return stored || generateSessionId()
   })
   const [userId] = useState<string>(() => getOrCreateUserId())
+  const [isDeleting, setIsDeleting] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -53,6 +54,39 @@ const ChatbotButton = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const handleDeleteAllSessions = async () => {
+    if (!confirm('Are you sure you want to delete ALL sessions? This action cannot be undone.')) {
+      return
+    }
+
+    setIsDeleting(true)
+    try {
+      const response = await fetch(`${API_URL}/sessions/all`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to delete sessions')
+      }
+
+      const data = await response.json()
+      alert(data.message || 'All sessions deleted successfully')
+      
+      // Clear local session storage
+      sessionStorage.removeItem('autoemporium_session_id')
+      setSessionId(generateSessionId())
+      setMessages([])
+    } catch (error) {
+      console.error('Error deleting sessions:', error)
+      alert('Failed to delete sessions. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   const handleClick = () => {
     if (isOpen) {
@@ -143,14 +177,32 @@ const ChatbotButton = () => {
         <div className="fixed bottom-24 right-6 w-96 h-96 bg-white rounded-lg shadow-2xl border border-gray-200 z-40 flex flex-col">
           <div className="bg-amber-600 text-white p-4 rounded-t-lg flex items-center justify-between">
             <h3 className="font-semibold">Chat Support</h3>
-            <button
-              onClick={closeChatbot}
-              className="text-white hover:text-gray-200"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={handleDeleteAllSessions}
+                disabled={isDeleting}
+                className="bg-red-600 hover:bg-red-700 text-white p-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                title="Delete all sessions"
+              >
+                {isDeleting ? (
+                  <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                )}
+              </button>
+              <button
+                onClick={closeChatbot}
+                className="text-white hover:text-gray-200"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
           <div className="flex-1 p-4 overflow-y-auto bg-gray-50">
             {messages.length === 0 ? (

@@ -9,6 +9,7 @@ from typing import List, Optional
 import operator
 import json
 import re
+import redis
 
 load_dotenv()
 
@@ -97,21 +98,23 @@ def parse_slots(state: State) -> State:
     }
     
     # Create prompt for slot extraction
-    extraction_prompt = f"""Extract car purchase preferences from the following user message. 
+    extraction_prompt = f"""Extract luxury car purchase preferences from the following user message from an Indian customer at a premium luxury car showroom. 
 Return ONLY a valid JSON object with the extracted values. If a value is not mentioned, use null.
 
 User message: "{user_message}"
 
 Current known preferences: {json.dumps(existing_slots, default=str)}
 
-Extract the following slots:
-- budget_max: Maximum budget as a number (e.g., 30000, 50000.50). Extract from phrases like "under $30k", "max $50000", "budget of 40k"
-- seats_min: Minimum number of seats as an integer (e.g., 5, 7). Extract from phrases like "seats 5", "at least 7 seats", "5-seater"
-- fuel: Fuel type as lowercase string - one of: "gas", "electric", "hybrid", "diesel", "plug-in hybrid". Extract from phrases like "electric car", "gas vehicle", "hybrid"
-- body: Body type as lowercase string - one of: "sedan", "suv", "truck", "coupe", "hatchback", "wagon", "convertible". Extract from phrases like "SUV", "sedan", "truck"
-- transmission_ban: List of transmission types the user does NOT want (e.g., ["manual", "automatic"]). Extract from phrases like "no manual", "don't want automatic", "avoid CVT"
-- brand: Car brand as string (e.g., "Toyota", "Honda", "Ford"). Extract brand names mentioned
-- model: Car model as string (e.g., "Camry", "Civic", "F-150"). Extract model names mentioned
+Extract the following slots (all amounts are in Indian Rupees - INR):
+- budget_max: Maximum budget as a number in INR (e.g., 5000000, 15000000, 50000000, 100000000). Extract from phrases like "under 50 lakh", "max ₹1.5 crore", "budget of 1 crore", "around 2 crore rupees", "upto 75L", "within 80 lakh budget", "50 lakh to 1 crore"
+- seats_min: Minimum number of seats as an integer (e.g., 4, 5, 7). Extract from phrases like "seats 5", "at least 7 seats", "5-seater", "need 7 seater"
+- fuel: Fuel type as lowercase string - one of: "petrol", "diesel", "electric", "hybrid", "plug-in hybrid". Extract from phrases like "petrol car", "diesel vehicle", "electric", "hybrid", "EV"
+- body: Body type as lowercase string - one of: "sedan", "suv", "coupe", "convertible", "wagon", "sports car". Extract from phrases like "luxury sedan", "premium SUV", "sports car", "coupe", "convertible"
+- transmission_ban: List of transmission types the user does NOT want (e.g., ["manual"]). Extract from phrases like "no manual", "don't want manual", "avoid manual", "only automatic"
+- brand: Luxury car brand as string (e.g., "Mercedes-Benz", "BMW", "Audi", "Jaguar", "Land Rover", "Volvo", "Lexus", "Porsche", "Bentley", "Rolls-Royce", "Maserati", "Range Rover"). Extract brand names mentioned
+- model: Luxury car model as string (e.g., "S-Class", "5 Series", "A6", "XF", "Discovery", "XC90", "ES", "Cayenne", "Continental", "Ghost", "Ghibli", "Evoque"). Extract model names mentioned
+
+Note: Convert Indian number formats - "lakh" = 100000, "crore" = 10000000. "50 lakh" = 5000000, "1.5 crore" = 15000000. This is a luxury showroom, so budgets are typically in higher ranges (30 lakh+).
 
 Return JSON format:
 {{
@@ -281,18 +284,33 @@ def respond(state: State) -> State:
         # Generate a crisp clarification question
         clarification_prompts = {
             "budget_max": "What's your maximum budget for the car?",
-            "body": "What type of vehicle are you looking for? (e.g., sedan, SUV, truck)",
+            "body": "What type of luxury vehicle are you looking for? (e.g., sedan, SUV, coupe, convertible)",
             "seats_min": "How many seats do you need?",
-            "fuel": "What fuel type do you prefer? (gas, electric, hybrid, etc.)"
+            "fuel": "What fuel type do you prefer? (petrol, diesel, electric, hybrid)"
         }
         
-        # Use LLM to generate a more natural clarification question
-        clarification_prompt = f"""Generate a single, friendly, and concise question to ask the customer about their {next_slot_to_ask} preference for buying a car.
+        # Use LLM to generate a more natural clarification question for Indian luxury car showroom
+        slot_descriptions = {
+            "budget_max": "maximum budget in Indian Rupees (INR) for a luxury car. Use terms like 'lakh' or 'crore'. For example, '50 lakh', '1 crore', '₹1.5 crore'. Typical luxury car budgets range from 30 lakh to several crores",
+            "body": "type of luxury vehicle (sedan, SUV, coupe, convertible, sports car, etc.)",
+            "seats_min": "number of seats needed",
+            "fuel": "fuel type preference (petrol, diesel, electric, hybrid, plug-in hybrid)"
+        }
         
-Context: They're looking to buy a car and we need to know their {next_slot_to_ask}.
-Current known preferences: Budget: {state.get('budget_max')}, Body: {state.get('body')}, Seats: {state.get('seats_min')}, Fuel: {state.get('fuel')}, Brand: {state.get('brand')}, Model: {state.get('model')}
+        clarification_prompt = f"""You are an elegant and professional sales consultant at a premium luxury car showroom in India. Generate a single, refined, and sophisticated question in Indian English to ask the customer about their {slot_descriptions.get(next_slot_to_ask, next_slot_to_ask)} preference for purchasing a luxury car.
+        
+Context: They're looking to buy a luxury/premium car and we need to know their {next_slot_to_ask}.
+Current known preferences: Budget: {state.get('budget_max')} INR, Body: {state.get('body')}, Seats: {state.get('seats_min')}, Fuel: {state.get('fuel')}, Brand: {state.get('brand')}, Model: {state.get('model')}
 
-Return ONLY the question, nothing else. Make it conversational and friendly."""
+Guidelines:
+- Use refined Indian English appropriate for a luxury showroom
+- Be professional, elegant, and respectful (addressing them as "sir" or "madam" if natural)
+- Use premium terminology (e.g., "luxury sedan", "premium SUV", "high-end")
+- For budget questions, mention "lakh" or "crore" as appropriate (luxury cars typically 30 lakh+)
+- Maintain a sophisticated yet warm tone
+- Keep it concise and professional
+
+Return ONLY the question, nothing else. Do not add quotes."""
         
         try:
             response_obj = llm.invoke(clarification_prompt)
@@ -333,10 +351,18 @@ Return ONLY the question, nothing else. Make it conversational and friendly."""
             "model": state.get("model"),
         }
         
-        # Format budget string
-        budget_str = f"${extracted_slots['budget_max']:,.0f} maximum" if extracted_slots['budget_max'] else "Not specified"
+        # Format budget string in Indian format (lakhs/crores)
+        budget_str = "Not specified"
+        if extracted_slots['budget_max']:
+            budget_value = extracted_slots['budget_max']
+            if budget_value >= 10000000:  # 1 crore or more
+                budget_str = f"₹{budget_value/10000000:.1f} crore"
+            elif budget_value >= 100000:  # 1 lakh or more
+                budget_str = f"₹{budget_value/100000:.1f} lakh"
+            else:
+                budget_str = f"₹{budget_value:,.0f}"
         
-        response_prompt = f"""You are a helpful car dealership assistant helping a customer buy a car.
+        response_prompt = f"""You are an elegant and professional sales consultant at a premium luxury car showroom in India, helping a discerning Indian customer purchase a luxury vehicle. Use refined Indian English, Indian currency (INR/₹), and premium terminology appropriate for a luxury showroom.
 
 Customer's message: "{user_message}"
 
@@ -351,15 +377,24 @@ Customer's preferences so far:
 
 Current stage: {state.get('stage', 'needs_analysis')}
 
-Provide a helpful response that:
-1. Acknowledges their preferences
-2. Provides relevant information or recommendations based on what they've shared
-3. Includes a brief rationale for your response
-4. Suggests a clear next step
+Guidelines for your response:
+- Use Indian English appropriate for a luxury showroom (e.g., "petrol" not "gas", "lakh" not "hundred thousand")
+- Use Indian currency format (₹ and lakhs/crores where appropriate)
+- Be professional and respectful
+- Reference luxury/premium car brands available in India: Mercedes-Benz, BMW, Audi, Jaguar, Land Rover, Range Rover, Volvo, Lexus, Porsche, Bentley, Rolls-Royce, Maserati, etc.
+- Use premium terminology: "luxury sedan", "premium SUV", "high-end", "prestigious", "sophisticated", "refined"
+- Reference luxury features: "premium interiors", "advanced technology", "superior craftsmanship", "exclusive", "bespoke"
+- Use terms like "on-road price", "ex-showroom", "mileage" (not "fuel economy")
+- Mention luxury services: "test drive", "personalized consultation", "exclusive showroom visit", "customization options"
+
+Provide a sophisticated response that:
+1. Provides relevant information or recommendations about luxury vehicles based on what they've shared (consider Indian luxury car market context)
+2. Highlights premium features, craftsmanship, and exclusivity when relevant
+4. Suggests a clear next step (e.g., test drive, showroom visit, detailed consultation)
 
 Format your response as JSON:
 {{
-  "response": "<your helpful response to the customer>",
+  "response": "<your response to the customer>",
   "rationale": "<brief reason for this response>",
   "next_step": "<suggested next step>"
 }}
@@ -399,14 +434,14 @@ Only return the JSON object, no other text."""
             logger.warning(f"Failed to parse JSON from LLM response: {response_text[:200] if 'response_text' in locals() else 'N/A'}... Error: {str(e)}")
             # Fallback response
             return {
-                "response": "I understand you're looking for a car. Let me help you find the perfect vehicle!",
+                "response": "I understand you're looking for a luxury vehicle. Let me help you find the perfect premium car that matches your discerning taste and requirements!",
                 "rationale": "Generated fallback response",
                 "next_step": "Continue gathering preferences"
             }
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}", exc_info=True)
             return {
-                "response": "I'm here to help you find the perfect car!",
+                "response": "I'm here to assist you in finding the perfect luxury car! Please share your preferences, and I'll provide personalized recommendations from our premium collection.",
                 "rationale": "Error occurred, using fallback",
                 "next_step": "Continue conversation"
             }
@@ -550,3 +585,67 @@ def handle_turn(session_id: str, user_id: str, message: str) -> str:
     except Exception as e:
         logger.error(f"Error in handle_turn - Session: {session_id}, Error: {str(e)}", exc_info=True)
         raise
+
+
+def delete_all_sessions() -> bool:
+    """Delete all Redis checkpoint entries.
+    
+    WARNING: This will delete ALL session states. Use with caution.
+    
+    Returns:
+        bool: True if deletion was successful, False otherwise
+    """
+    if not redis_uri:
+        logger.warning("Cannot delete all sessions: Redis URI not configured")
+        return False
+    
+    try:
+        logger.warning("Deleting ALL Redis checkpoint entries - this action cannot be undone")
+        
+        # Create a Redis client directly from the connection string
+        redis_client = redis.from_url(redis_uri, decode_responses=False)
+        
+        # Delete all keys matching the checkpoint pattern
+        # RedisSaver typically uses keys with "checkpoint:" prefix
+        pattern = "checkpoint:*"
+        
+        # Use SCAN instead of KEYS for better performance
+        deleted_count = 0
+        cursor = 0
+        
+        while True:
+            cursor, keys = redis_client.scan(cursor, match=pattern, count=100)
+            if keys:
+                # Delete all matching keys
+                # Keys are already bytes from scan, so we can delete them directly
+                deleted = redis_client.delete(*keys)
+                deleted_count += deleted
+            if cursor == 0:
+                break
+        
+        # Also try to delete keys with other possible patterns
+        # Some RedisSaver implementations might use different prefixes
+        additional_patterns = ["checkpoint_*", "langgraph:*", "thread:*"]
+        for pattern in additional_patterns:
+            cursor = 0
+            while True:
+                cursor, keys = redis_client.scan(cursor, match=pattern, count=100)
+                if keys:
+                    deleted = redis_client.delete(*keys)
+                    deleted_count += deleted
+                if cursor == 0:
+                    break
+        
+        if deleted_count > 0:
+            logger.info(f"Deleted {deleted_count} checkpoint entries from Redis")
+        else:
+            logger.info("No checkpoint entries found to delete")
+        
+        redis_client.close()
+        return True
+            
+    except Exception as e:
+        logger.error(f"Error deleting all sessions: {str(e)}", exc_info=True)
+        return False
+
+
