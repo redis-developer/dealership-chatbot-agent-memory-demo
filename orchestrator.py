@@ -27,7 +27,6 @@ class State(TypedDict):
     session_id: Optional[str]  # Session identifier for working memory
     
     # Slots (extracted information)
-    budget_max: Optional[float]
     seats_min: Optional[int]
     fuel: Optional[str]  # "gas", "electric", "hybrid", etc.
     body: Optional[str]  # "sedan", "suv", "truck", etc.
@@ -47,6 +46,7 @@ class State(TypedDict):
     response: Optional[str]
     rationale: Optional[str]
     next_step: Optional[str]
+    conversation_context: Optional[str]  # Conversation history from long-term memory
 
 
 # Initialize Redis checkpointer for state persistence
@@ -103,13 +103,81 @@ except Exception as e:
     logger.warning(f"Failed to initialize Agent Memory Client: {str(e)}. Working memory will not be available.")
     memory_client = None
 
+# Helper function to run async code
+def run_async(coro):
+    """Helper to run async functions in sync context."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            logger.debug("Event loop already running, creating new loop for async operation")
+            # If loop is already running, we need to use a different approach
+            # For now, skip if loop is running
+            return None
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    return loop.run_until_complete(coro)
+
+# Memory is retrieved manually at login, so LLM does not have tool access
+
+# Node 0: retrieve_conversation_context - retrieve conversation context from long-term memory
+def retrieve_conversation_context(state: State) -> State:
+    """Retrieve conversation context from long-term memory if not already present in state.
+    
+    This ensures conversation_context is available for all LLM calls throughout the workflow.
+    """
+    logger.info("Node: retrieve_conversation_context - Retrieving conversation context")
+    
+    # If conversation_context already exists in state, preserve it
+    existing_context = state.get("conversation_context")
+    if existing_context:
+        logger.debug("Conversation context already present in state, preserving it")
+        return {}
+    
+    user_id = state.get("user_id")
+    session_id = state.get("session_id")
+    
+    if not memory_client or not user_id:
+        logger.debug("Memory client or user_id not available, skipping conversation context retrieval")
+        return {}
+    
+    try:
+        async def get_conversation_history():
+            # Search for recent conversation history for this user
+            # Don't filter by session_id to get memories from all sessions
+            user_id_filter = {"eq": user_id} if user_id else None
+            results = await memory_client.search_long_term_memory(
+                text="conversation history car purchase preferences",
+                user_id=user_id_filter,
+                session_id=None,  # Get memories from all sessions
+                limit=10,
+                distance_threshold=0.6
+            )
+            return results
+        
+        history_results = run_async(get_conversation_history())
+        if history_results and hasattr(history_results, 'memories') and history_results.memories:
+            # Format conversation history
+            memory_texts = [m.text for m in history_results.memories[:5]]  # Top 5 most relevant
+            conversation_context = "\n".join([f"- {text}" for text in memory_texts])
+            logger.info(f"Retrieved {len(history_results.memories)} conversation memories for user {user_id}")
+            logger.info(f"Conversation context retrieved : {conversation_context}")
+            return {"conversation_context": conversation_context}
+        else:
+            logger.debug(f"No conversation history found for user {user_id}")
+            return {}
+    except Exception as e:
+        logger.warning(f"Error retrieving conversation history: {str(e)}")
+        return {}
+
 # Node 1: parse_slots - extract/merge slots from user message
 def parse_slots(state: State) -> State:
     logger.info("Node: parse_slots - Extracting and merging slots")
     
     user_message = state.get("request", "")
+    conversation_context = state.get("conversation_context")
     existing_slots = {
-        "budget_max": state.get("budget_max"),
         "seats_min": state.get("seats_min"),
         "fuel": state.get("fuel"),
         "body": state.get("body"),
@@ -119,16 +187,25 @@ def parse_slots(state: State) -> State:
         "test_drive_completed": state.get("test_drive_completed", False),
     }
     
+    # Build context section if conversation history is available
+    context_section = ""
+    if conversation_context:
+        context_section = f"""
+
+Relevant context from past conversations with this customer (ordered from most recent to older):
+{conversation_context}
+
+IMPORTANT: The memories above are ordered chronologically - the FIRST memory is the MOST RECENT event, and subsequent memories are older. Extract and use information from ALL memories to understand the customer's complete journey and preferences. The most recent memory shows their current stage, while older memories contain their initial preferences (body type, brand, model, etc.)."""
+    
     # Create prompt for slot extraction
     extraction_prompt = f"""Extract luxury car purchase preferences from the following user message from an Indian customer at a premium luxury car showroom. 
 Return ONLY a valid JSON object with the extracted values. If a value is not mentioned, use null.
 
-User message: "{user_message}"
+User message: "{user_message}"{context_section}
 
 Current known preferences: {json.dumps(existing_slots, default=str)}
 
-Extract the following slots (all amounts are in Indian Rupees - INR):
-- budget_max: Maximum budget as a number in INR (e.g., 5000000, 15000000, 50000000, 100000000). Extract from phrases like "under 50 lakh", "max ₹1.5 crore", "budget of 1 crore", "around 2 crore rupees", "upto 75L", "within 80 lakh budget", "50 lakh to 1 crore"
+Extract the following slots:
 - seats_min: Minimum number of seats as an integer (e.g., 4, 5, 7). Extract from phrases like "seats 5", "at least 7 seats", "5-seater", "need 7 seater"
 - fuel: Fuel type as lowercase string - one of: "petrol", "diesel", "electric", "hybrid", "plug-in hybrid". Extract from phrases like "petrol car", "diesel vehicle", "electric", "hybrid", "EV"
 - body: Body type as lowercase string - one of: "sedan", "suv", "coupe", "convertible", "wagon", "sports car". Extract from phrases like "luxury sedan", "premium SUV", "sports car", "coupe", "convertible"
@@ -137,11 +214,8 @@ Extract the following slots (all amounts are in Indian Rupees - INR):
 - model: Luxury car model as string (e.g., "S-Class", "5 Series", "A6", "XF", "Discovery", "XC90", "ES", "Cayenne", "Continental", "Ghost", "Ghibli", "Evoque"). Extract model names mentioned
 - test_drive_completed: Boolean - set to true if user mentions they completed the test drive, scheduled a test drive, confirmed test drive date, or said they're ready to proceed after test drive. Extract from phrases like "test drive done", "completed test drive", "test drive was great", "ready to buy", "let's proceed", "I've driven it"
 
-Note: Convert Indian number formats - "lakh" = 100000, "crore" = 10000000. "50 lakh" = 5000000, "1.5 crore" = 15000000. This is a luxury showroom, so budgets are typically in higher ranges (30 lakh+).
-
 Return JSON format:
 {{
-  "budget_max": <number or null>,
   "seats_min": <integer or null>,
   "fuel": <string or null>,
   "body": <string or null>,
@@ -183,11 +257,6 @@ Only return the JSON object, no other text."""
         # Merge with existing slots (only update non-null values)
         updated_slots = {}
         
-        if extracted_slots.get("budget_max") is not None:
-            updated_slots["budget_max"] = float(extracted_slots["budget_max"])
-        elif existing_slots["budget_max"] is not None:
-            updated_slots["budget_max"] = existing_slots["budget_max"]
-        
         if extracted_slots.get("seats_min") is not None:
             updated_slots["seats_min"] = int(extracted_slots["seats_min"])
         elif existing_slots["seats_min"] is not None:
@@ -226,7 +295,7 @@ Only return the JSON object, no other text."""
         elif existing_slots.get("test_drive_completed") is not None:
             updated_slots["test_drive_completed"] = existing_slots["test_drive_completed"]
         
-        logger.info(f"Parsed slots - Budget: {updated_slots.get('budget_max')}, Seats: {updated_slots.get('seats_min')}, Fuel: {updated_slots.get('fuel')}, Body: {updated_slots.get('body')}, Brand: {updated_slots.get('brand')}, Model: {updated_slots.get('model')}, Test Drive: {updated_slots.get('test_drive_completed')}")
+        logger.info(f"Parsed slots - Seats: {updated_slots.get('seats_min')}, Fuel: {updated_slots.get('fuel')}, Body: {updated_slots.get('body')}, Brand: {updated_slots.get('brand')}, Model: {updated_slots.get('model')}, Test Drive: {updated_slots.get('test_drive_completed')}")
         
         return updated_slots
         
@@ -244,7 +313,6 @@ def ensure_readiness(state: State) -> State:
     
     # Define required slots for car purchase
     required_slots = {
-        "budget_max": state.get("budget_max"),
         "body": state.get("body"),
     }
     
@@ -283,9 +351,9 @@ def respond(state: State) -> State:
     
     if need_clarification:
         # Ask one crisp clarification question about the most important missing slot
-        # Priority: budget_max > body > seats_min > fuel
+        # Priority: body > seats_min > fuel
         
-        slot_priority = ["budget_max", "body", "seats_min", "fuel"]
+        slot_priority = ["body", "seats_min", "fuel"]
         next_slot_to_ask = None
         
         # First, try to find a missing required slot in priority order
@@ -302,26 +370,34 @@ def respond(state: State) -> State:
                     next_slot_to_ask = slot
                     break
         
-        # Fallback: use first missing required slot, or first optional, or default to budget
+        # Fallback: use first missing required slot, or first optional
         if not next_slot_to_ask:
             if missing_required:
                 next_slot_to_ask = missing_required[0]
             elif missing_slots_info.get("optional", []):
                 next_slot_to_ask = missing_slots_info["optional"][0]
-            else:
-                next_slot_to_ask = "budget_max"  # Default fallback
         
         # Generate a crisp clarification question
         clarification_prompts = {
-            "budget_max": "What's your maximum budget for the car?",
             "body": "What type of luxury vehicle are you looking for? (e.g., sedan, SUV, coupe, convertible)",
             "seats_min": "How many seats do you need?",
             "fuel": "What fuel type do you prefer? (petrol, diesel, electric, hybrid)"
         }
         
         # Use LLM to generate a more natural clarification question for Indian luxury car showroom
+        conversation_context = state.get("conversation_context")
+        
+        # Build context section if conversation history is available
+        context_section = ""
+        if conversation_context:
+            context_section = f"""
+
+Relevant context from past conversations with this customer (ordered from most recent to older):
+{conversation_context}
+
+IMPORTANT: The memories above are ordered chronologically - the FIRST memory is the MOST RECENT event, and subsequent memories are older. Extract and use information from ALL memories. If the preference you're asking about is already mentioned in any of these memories, DO NOT ask about it again."""
+        
         slot_descriptions = {
-            "budget_max": "maximum budget in Indian Rupees (INR) for a luxury car. Use terms like 'lakh' or 'crore'. For example, '50 lakh', '1 crore', '₹1.5 crore'. Typical luxury car budgets range from 30 lakh to several crores",
             "body": "type of luxury vehicle (sedan, SUV, coupe, convertible, sports car, etc.)",
             "seats_min": "number of seats needed",
             "fuel": "fuel type preference (petrol, diesel, electric, hybrid, plug-in hybrid)"
@@ -330,16 +406,18 @@ def respond(state: State) -> State:
         clarification_prompt = f"""You are a professional sales consultant at a premium luxury car showroom in India. Generate a single, refined, and sophisticated question in Indian English to ask the customer about their {slot_descriptions.get(next_slot_to_ask, next_slot_to_ask)} preference for purchasing a luxury car.
         
 Context: They're looking to buy a luxury/premium car and we need to know their {next_slot_to_ask}.
-Current known preferences: Budget: {state.get('budget_max')} INR, Body: {state.get('body')}, Seats: {state.get('seats_min')}, Fuel: {state.get('fuel')}, Brand: {state.get('brand')}, Model: {state.get('model')}
+Current known preferences: Body: {state.get('body')}, Seats: {state.get('seats_min')}, Fuel: {state.get('fuel')}, Brand: {state.get('brand')}, Model: {state.get('model')}{context_section}
+
+IMPORTANT: If the conversation context above mentions preferences that are already known (like body type, seats, fuel, brand, or model), DO NOT ask about those preferences again. Only ask about the {next_slot_to_ask} if it's truly missing and not mentioned in the conversation context.
 
 Guidelines:
 - Use refined Indian English appropriate for a luxury showroom
 - Use premium terminology (e.g., "luxury sedan", "premium SUV", "high-end")
-- For budget questions, mention "lakh" or "crore" as appropriate (luxury cars typically 30 lakh+)
 - Maintain a sophisticated yet warm tone
 - Keep it concise and professional
 - Keep it conversational - NO formal email greetings like "Dear Customer" or "Dear [Customer]"
 - NO formal closings like "Warm regards", "Best regards", "[Your Name]", "Sales Consultant at [Showroom Name]", or any signatures
+- If the preference is already mentioned in the conversation context, acknowledge it instead of asking again
 
 Return ONLY the question, nothing else. Do not add quotes."""
         
@@ -373,7 +451,6 @@ Return ONLY the question, nothing else. Do not add quotes."""
         # Generate answer from LLM's knowledge with rationale and next step
         user_message = state.get("request", "")
         extracted_slots = {
-            "budget_max": state.get("budget_max"),
             "seats_min": state.get("seats_min"),
             "fuel": state.get("fuel"),
             "body": state.get("body"),
@@ -382,23 +459,29 @@ Return ONLY the question, nothing else. Do not add quotes."""
             "model": state.get("model"),
         }
         
-        # Format budget string in Indian format (lakhs/crores)
-        budget_str = "Not specified"
-        if extracted_slots['budget_max']:
-            budget_value = extracted_slots['budget_max']
-            if budget_value >= 10000000:  # 1 crore or more
-                budget_str = f"₹{budget_value/10000000:.1f} crore"
-            elif budget_value >= 100000:  # 1 lakh or more
-                budget_str = f"₹{budget_value/100000:.1f} lakh"
-            else:
-                budget_str = f"₹{budget_value:,.0f}"
+        user_id = state.get("user_id")
+        session_id = state.get("session_id")
+        conversation_context = state.get("conversation_context")
+        
+        # Build context section if conversation history is available
+        context_section = ""
+        if conversation_context:
+            logger.info(f"Passing conversation_context to LLM - User: {user_id}, Session: {session_id}, Context length: {len(conversation_context)} chars")
+            logger.debug(f"Conversation context content: {conversation_context[:500]}..." if len(conversation_context) > 500 else f"Conversation context content: {conversation_context}")
+            context_section = f"""
+
+Relevant context from past conversations with this customer (ordered from most recent to older):
+{conversation_context}
+
+IMPORTANT: The memories above are ordered chronologically - the FIRST memory is the MOST RECENT event, and subsequent memories are older. Extract and use information from ALL memories to understand the customer's complete journey and preferences. The most recent memory shows their current stage, while older memories contain their initial preferences (body type, brand, model, etc.)."""
+        else:
+            logger.debug(f"No conversation_context available for User: {user_id}, Session: {session_id}")
         
         response_prompt = f"""You are an elegant and professional sales consultant at a premium luxury car showroom in India, helping a discerning Indian customer purchase a luxury vehicle. Use refined Indian English, Indian currency (INR/₹), and premium terminology appropriate for a luxury showroom.
 
-Customer's message: "{user_message}"
+Customer's message: "{user_message}"{context_section}
 
 Customer's preferences so far:
-- Budget: {budget_str}
 - Body type: {extracted_slots['body'] or 'Not specified'}
 - Seats: {extracted_slots['seats_min'] or 'Not specified'}
 - Fuel type: {extracted_slots['fuel'] or 'Not specified'}
@@ -407,6 +490,8 @@ Customer's preferences so far:
 - Avoid transmissions: {', '.join(extracted_slots['transmission_ban']) if extracted_slots['transmission_ban'] else 'None'}
 
 Current stage: {state.get('stage', 'needs_analysis')}
+
+IMPORTANT: If the conversation context above mentions preferences that are already known (like body type, seats, fuel, brand, or model), DO NOT ask about those preferences again. Acknowledge what you already know from the context instead of asking the same questions.
 
 Guidelines for your response:
 - Use Indian English appropriate for a luxury showroom (e.g., "petrol" not "gas", "lakh" not "hundred thousand")
@@ -419,6 +504,7 @@ Guidelines for your response:
 - Keep it conversational and chat-like - NO formal email greetings like "Dear Customer" or "Dear [Customer]"
 - NO formal closings like "Warm regards", "Best regards", "[Your Name]", "Sales Consultant at [Showroom Name]", or any signatures
 - Write as if you're chatting directly with the customer, not writing an email
+- If preferences are already mentioned in the conversation context, acknowledge them instead of asking again
 
 Provide a sophisticated response that:
 1. Provides relevant information or recommendations about luxury vehicles based on what they've shared (consider Indian luxury car market context)
@@ -435,6 +521,7 @@ Format your response as JSON:
 Only return the JSON object, no other text."""
         
         try:
+            # Use LLM directly (no tool access - memory is retrieved manually at login)
             response_obj = llm.invoke(response_prompt)
             response_text = response_obj.content.strip()
             
@@ -508,7 +595,19 @@ def suggest_test_drive(state: State) -> State:
     # Format dates in Indian style
     date_options = ", ".join([f"{date}" for date in suggested_dates])
     
-    test_drive_prompt = f"""You are an elegant sales consultant at a premium luxury car showroom in India chatting with a customer. The customer has decided on the {brand} {model}. 
+    conversation_context = state.get("conversation_context")
+    
+    # Build context section if conversation history is available
+    context_section = ""
+    if conversation_context:
+        context_section = f"""
+
+Relevant context from past conversations with this customer (ordered from most recent to older):
+{conversation_context}
+
+IMPORTANT: The memories above are ordered chronologically - the FIRST memory is the MOST RECENT event, and subsequent memories are older. Extract and use information from ALL memories to personalize your test drive suggestion."""
+    
+    test_drive_prompt = f"""You are an elegant sales consultant at a premium luxury car showroom in India chatting with a customer. The customer has decided on the {brand} {model}.{context_section}
 
 Generate a warm, professional chat message suggesting a test drive with the following available dates: {date_options}.
 
@@ -560,7 +659,6 @@ def suggest_financing(state: State) -> State:
     
     model = state.get("model")
     brand = state.get("brand")
-    budget_max = state.get("budget_max")
     test_drive_completed = state.get("test_drive_completed", False)
     
     if not test_drive_completed:
@@ -571,22 +669,15 @@ def suggest_financing(state: State) -> State:
             "next_step": "Complete test drive"
         }
     
-    if not model or not budget_max:
-        logger.warning("Missing model or budget, cannot calculate financing")
+    if not model:
+        logger.warning("Missing model, cannot suggest financing")
         return {
-            "response": "I'd be happy to discuss financing options. Could you please confirm the model and budget you're interested in?",
-            "rationale": "Missing model or budget for financing",
-            "next_step": "Provide model and budget details"
+            "response": "I'd be happy to discuss financing options. Could you please confirm the model you're interested in?",
+            "rationale": "Missing model for financing",
+            "next_step": "Provide model details"
         }
     
     logger.info(f"Test drive completed - Suggesting financing options for {brand} {model}")
-    
-    # Calculate financing options
-    # Typical financing: 10-20% down payment, 3-7 years tenure, 8-12% interest rate
-    down_payment_10 = budget_max * 0.10
-    down_payment_20 = budget_max * 0.20
-    loan_amount_10 = budget_max - down_payment_10
-    loan_amount_20 = budget_max - down_payment_20
     
     # Format in Indian currency
     def format_currency(amount):
@@ -597,14 +688,24 @@ def suggest_financing(state: State) -> State:
         else:
             return f"₹{amount:,.0f}"
     
-    financing_prompt = f"""You are a sales consultant at a premium luxury car showroom in India chatting with a customer. The customer has completed the test drive for the {brand} {model} and is ready to discuss financing.
+    conversation_context = state.get("conversation_context")
+    
+    # Build context section if conversation history is available
+    context_section = ""
+    if conversation_context:
+        context_section = f"""
+
+Relevant context from past conversations with this customer (ordered from most recent to older):
+{conversation_context}
+
+IMPORTANT: The memories above are ordered chronologically - the FIRST memory is the MOST RECENT event, and subsequent memories are older. Extract and use information from ALL memories to personalize your financing options presentation."""
+    
+    financing_prompt = f"""You are a sales consultant at a premium luxury car showroom in India chatting with a customer. The customer has completed the test drive for the {brand} {model} and is ready to discuss financing.{context_section}
 
 Vehicle: {brand} {model}
-On-road price: {format_currency(budget_max)}
 
 Financing options:
-- Down Payment: {format_currency(down_payment_10)} (10%) or {format_currency(down_payment_20)} (20%)
-- Loan Amount: {format_currency(loan_amount_10)} (with 10% down) or {format_currency(loan_amount_20)} (with 20% down)
+- Down Payment: 10% or 20% of the vehicle price
 - Tenure: 3, 5, or 7 years
 - Interest Rate: Starting from 8.5% per annum
 - Processing Fee: Waived
@@ -731,37 +832,41 @@ def save_to_working_memory(state: State) -> State:
         if result:
             logger.debug(f"Working memory updated successfully for session {session_id}")
         
-        # Store important stage information as long-term memory
         current_stage = state.get("stage")
         test_drive_completed = state.get("test_drive_completed", False)
         brand = state.get("brand", "Unknown")
         model = state.get("model", "Unknown")
         
-        # Track important stage transitions and milestones
+        # Track important preferences and stage transitions
+        preferences_memories_to_store = []
         stage_memories_to_store = []
         
         if current_stage == "test_drive":
             # Test drive has been scheduled
             stage_memory_text = f"Customer is at test drive stage for {brand} {model}. Test drive has been scheduled."
+            # Filter out None values from entities
+            entities_list = [e for e in [brand, model] if e and e != "Unknown"]
             stage_memories_to_store.append(ClientMemoryRecord(
                 text=stage_memory_text,
                 user_id=user_id,
                 session_id=session_id,
-                memory_type=MemoryTypeEnum.EPISODIC,
+                memory_type=MemoryTypeEnum.SEMANTIC,
                 topics=["car_purchase", "stage", "test_drive", "scheduled"],
-                entities=[brand, model] if brand != "Unknown" else []
+                entities=entities_list
             ))
         
         if test_drive_completed:
             # Test drive has been completed
             test_drive_memory_text = f"Customer completed test drive for {brand} {model}."
+            # Filter out None values from entities
+            entities_list = [e for e in [brand, model] if e and e != "Unknown"]
             stage_memories_to_store.append(ClientMemoryRecord(
                 text=test_drive_memory_text,
                 user_id=user_id,
                 session_id=session_id,
-                memory_type=MemoryTypeEnum.EPISODIC,
+                memory_type=MemoryTypeEnum.SEMANTIC,
                 topics=["car_purchase", "stage", "test_drive", "completed"],
-                entities=[brand, model] if brand != "Unknown" else []
+                entities=entities_list
             ))
         
         if current_stage == "financing":
@@ -769,25 +874,28 @@ def save_to_working_memory(state: State) -> State:
             financing_memory_text = f"Customer is at financing stage for {brand} {model}."
             if test_drive_completed:
                 financing_memory_text = f"Customer completed test drive for {brand} {model} and is now at financing stage."
+            # Filter out None values from entities
+            entities_list = [e for e in [brand, model] if e and e != "Unknown"]
             stage_memories_to_store.append(ClientMemoryRecord(
                 text=financing_memory_text,
                 user_id=user_id,
                 session_id=session_id,
-                memory_type=MemoryTypeEnum.EPISODIC,
+                memory_type=MemoryTypeEnum.SEMANTIC,
                 topics=["car_purchase", "stage", "financing"],
-                entities=[brand, model] if brand != "Unknown" else []
+                entities=entities_list
             ))
         
-        # Store all stage memories
-        if stage_memories_to_store:
-            async def save_stage_memories():
-                result = await memory_client.create_long_term_memory(stage_memories_to_store)
-                logger.info(f"Stored {len(stage_memories_to_store)} stage memory/memories for user {user_id}")
+        # Store all preferences and stage memories
+        all_memories_to_store = preferences_memories_to_store + stage_memories_to_store
+        if all_memories_to_store:
+            async def save_memories():
+                result = await memory_client.create_long_term_memory(all_memories_to_store)
+                logger.info(f"Stored {len(all_memories_to_store)} memory/memories for user {user_id} ({len(preferences_memories_to_store)} preferences, {len(stage_memories_to_store)} stage)")
                 return result
             
-            stage_result = run_async(save_stage_memories())
-            if stage_result:
-                logger.debug(f"Stage memories stored successfully for user {user_id}")
+            memory_result = run_async(save_memories())
+            if memory_result:
+                logger.debug(f"Memories stored successfully for user {user_id}")
         
     except Exception as e:
         logger.warning(f"Error saving to working memory: {str(e)}", exc_info=True)
@@ -832,6 +940,7 @@ def build_workflow():
     workflow = StateGraph(State)
     
     # Add all nodes
+    workflow.add_node("retrieve_conversation_context", retrieve_conversation_context)
     workflow.add_node("parse_slots", parse_slots)
     workflow.add_node("ensure_readiness", ensure_readiness)
     workflow.add_node("respond", respond)
@@ -841,7 +950,8 @@ def build_workflow():
     workflow.add_node("save_to_working_memory", save_to_working_memory)
     
     # Define the flow
-    workflow.set_entry_point("parse_slots")
+    workflow.set_entry_point("retrieve_conversation_context")
+    workflow.add_edge("retrieve_conversation_context", "parse_slots")
     workflow.add_edge("parse_slots", "ensure_readiness")
     workflow.add_edge("ensure_readiness", "respond")
     workflow.add_conditional_edges(
@@ -897,7 +1007,7 @@ def handle_turn(session_id: str, user_id: str, message: str) -> str:
                 checkpoint = graph.get_state(config)
                 if checkpoint and checkpoint.values:
                     existing_state = checkpoint.values
-                    logger.debug(f"Restored state for thread_id: {thread_id} - Budget: {existing_state.get('budget_max')}, Body: {existing_state.get('body')}")
+                    logger.debug(f"Restored state for thread_id: {thread_id} - Body: {existing_state.get('body')}")
             except Exception as e:
                 logger.debug(f"No existing state found for thread_id: {thread_id} (this is normal for new sessions)")
         
@@ -908,7 +1018,6 @@ def handle_turn(session_id: str, user_id: str, message: str) -> str:
                 "request": message,  # New user message
                 "user_id": user_id,  # Pass user_id for working memory
                 "session_id": session_id,  # Pass session_id for working memory
-                "budget_max": existing_state.get("budget_max"),
                 "seats_min": existing_state.get("seats_min"),
                 "fuel": existing_state.get("fuel"),
                 "body": existing_state.get("body"),
@@ -922,14 +1031,15 @@ def handle_turn(session_id: str, user_id: str, message: str) -> str:
                 "response": None,  # Reset for new turn
                 "rationale": None,  # Reset for new turn
                 "next_step": None,  # Reset for new turn
+                "conversation_context": existing_state.get("conversation_context"),  # Preserve conversation context
             }
         else:
             # Initialize new state for this session
+            # Conversation context will be retrieved by retrieve_conversation_context node
             initial_state: State = {
                 "request": message,
                 "user_id": user_id,  # Pass user_id for working memory
                 "session_id": session_id,  # Pass session_id for working memory
-                "budget_max": None,
                 "seats_min": None,
                 "fuel": None,
                 "body": None,
@@ -943,7 +1053,9 @@ def handle_turn(session_id: str, user_id: str, message: str) -> str:
                 "rationale": None,
                 "next_step": None,
                 "test_drive_completed": None,
+                "conversation_context": None,  # Will be retrieved by retrieve_conversation_context node
             }
+            
             logger.debug(f"Created new state for thread_id: {thread_id}")
         
         # Invoke the graph - checkpointer is already compiled into the graph
@@ -952,7 +1064,7 @@ def handle_turn(session_id: str, user_id: str, message: str) -> str:
         
         response = final_state.get("response", "I'm processing your request.")
         logger.info(f"Turn completed - Session: {session_id}, Response length: {len(response) if response else 0}")
-        logger.debug(f"State persisted for thread_id: {thread_id} - Budget: {final_state.get('budget_max')}, Body: {final_state.get('body')}")
+        logger.debug(f"State persisted for thread_id: {thread_id} - Body: {final_state.get('body')}")
         return response
     except Exception as e:
         logger.error(f"Error in handle_turn - Session: {session_id}, Error: {str(e)}", exc_info=True)
@@ -1017,6 +1129,23 @@ def delete_all_sessions() -> bool:
         if memory_deleted_count > 0:
             logger.info(f"Deleted {memory_deleted_count} long-term memory entries from Redis")
             total_deleted += memory_deleted_count
+        
+        # Delete working memory keys from agent memory server
+        working_memory_pattern = "working_memory*"
+        working_memory_deleted_count = 0
+        cursor = 0
+        
+        while True:
+            cursor, keys = redis_client.scan(cursor, match=working_memory_pattern, count=100)
+            if keys:
+                deleted = redis_client.delete(*keys)
+                working_memory_deleted_count += deleted
+            if cursor == 0:
+                break
+        
+        if working_memory_deleted_count > 0:
+            logger.info(f"Deleted {working_memory_deleted_count} working memory entries from Redis")
+            total_deleted += working_memory_deleted_count
         
         if total_deleted > 0:
             logger.info(f"Total deleted: {total_deleted} entries (checkpoints + long-term memories)")

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useChatbot } from '../contexts/ChatbotContext'
+import { useAuth } from '../contexts/AuthContext'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -8,17 +9,6 @@ interface Message {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001'
 
-// Generate a unique user ID and store it in localStorage
-const getOrCreateUserId = (): string => {
-  const storedUserId = localStorage.getItem('autoemporium_user_id')
-  if (storedUserId) {
-    return storedUserId
-  }
-  const newUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-  localStorage.setItem('autoemporium_user_id', newUserId)
-  return newUserId
-}
-
 // Generate a unique session ID
 const generateSessionId = (): string => {
   return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -26,6 +16,7 @@ const generateSessionId = (): string => {
 
 const ChatbotButton = () => {
   const { isOpen, openChatbot, closeChatbot } = useChatbot()
+  const { userId } = useAuth()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -34,7 +25,6 @@ const ChatbotButton = () => {
     const stored = sessionStorage.getItem('autoemporium_session_id')
     return stored || generateSessionId()
   })
-  const [userId] = useState<string>(() => getOrCreateUserId())
   const [isDeleting, setIsDeleting] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -97,7 +87,7 @@ const ChatbotButton = () => {
   }
 
   const sendMessage = async () => {
-    if (!input.trim() || isLoading) return
+    if (!input.trim() || isLoading || !userId) return
 
     const userMessage = input.trim()
     setInput('')
@@ -153,6 +143,11 @@ const ChatbotButton = () => {
       e.preventDefault()
       sendMessage()
     }
+  }
+
+  // Don't show chatbot button if user is not logged in
+  if (!userId) {
+    return null
   }
 
   return (
