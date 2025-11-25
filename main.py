@@ -62,14 +62,18 @@ app.add_middleware(
 
 @app.post("/chat")
 def chat_request_handler(chat_request: ChatRequest) -> ChatResponse:
-    # Generate IDs if not provided
+    # Require user_id from UI - no fallback to prevent memory association issues
+    if not chat_request.user_id:
+        logger.error("user_id is required but was not provided in the request")
+        raise HTTPException(status_code=400, detail="user_id is required")
+    
+    user_id = chat_request.user_id
+    # Generate session_id if not provided (session can be new)
     session_id = chat_request.session_id or f"session_{uuid.uuid4().hex[:16]}"
-    user_id = chat_request.user_id or f"user_{uuid.uuid4().hex[:16]}"
     
     logger.info(f"Received chat request - Session: {session_id}, User: {user_id}, Message: {chat_request.message[:100]}...")
     
     try:
-        # Always pass the generated IDs to handle_turn
         response = handle_turn(session_id, user_id, chat_request.message)
         logger.info(f"Successfully processed chat request - Session: {session_id}")
         return ChatResponse(response=response, session_id=session_id)
