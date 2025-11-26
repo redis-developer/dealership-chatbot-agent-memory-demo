@@ -25,7 +25,7 @@ Car dealership AI agent demonstrates how Redis Agent Memory Server enables long-
 
 - Python 3.11+
 - Node.js 18+
-- Docker (for Redis Stack and Agent Memory Server)
+- Docker (for running frontend and backend together)
 
 ### Configuration
 
@@ -56,19 +56,19 @@ Get the Pre-built Docker Images from https://hub.docker.com/r/redislabs/agent-me
 
 Quick Start: Run the API Server (Requires Separate Redis)
 
-# Replace <redis-cloud-url> with your Redis connection string
-# Replace your-key with your OpenAI API key
+-> Replace <redis-cloud-url> with your Redis connection string
+-> Replace your-key with your OpenAI API key
 ```bash
 docker run -p 8000:8000 \
   -e REDIS_URL=<redis-cloud-url> \
   -e OPENAI_API_KEY=your-key \
   redislabs/agent-memory-server:latest
 ```
-
-Environment Variables
+Environment Variables:
 REDIS_URL: The connection string for your Redis instance (e.g., from Redis Cloud)
 OPENAI_API_KEY: Your OpenAI API key for memory extraction and embedding
-Notes
+
+Notes:
 This command starts only the Agent Memory Server API. You must have a running Redis instance accessible at the URL you provide.
 For more advanced configuration, see the full documentation: https://github.com/redis-developer/agent-memory-server
 
