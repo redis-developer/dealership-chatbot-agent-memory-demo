@@ -81,11 +81,9 @@ docker-compose up --build
 
 **Workflow Orchestration (LangGraph)**: Manages conversation state and guides customers through the car purchase journey
 
-**Short-Term Memory (Redis Agent Memory Server Working Memory)**: Maintains working memory of the ongoing conversation
+**Short-Term Memory (Redis Agent Memory Server)**: Maintains working memory of the ongoing conversation
 
-**Long-Term Memory (Redis Agent Memory Server)**: Stores customer preferences and conversation history across sessions
-
-**Slot-Filling (LangChain)**: Automatically extracts car preferences from natural conversation
+**Long-Term Memory (Redis Agent Memory Server)**: Semantic memory to stores customer preferences and conversation history across sessions
 
 **Modern Frontend (React 18 + TypeScript + Tailwind)**: Beautiful, responsive dealership UI with full-page chatbot interface
 
