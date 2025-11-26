@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from langchain_openai import ChatOpenAI
-from orchestrator import handle_turn, delete_all_sessions
+from orchestrator import handle_turn, delete_all_sessions, get_customer_journey
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     session_id: str
+    state: Optional[dict] = None  # Include state information
 
 EXPECTED_COLS = [
     "Company Names",
@@ -75,8 +76,10 @@ def chat_request_handler(chat_request: ChatRequest) -> ChatResponse:
     
     try:
         response = handle_turn(session_id, user_id, chat_request.message)
+        # Get current customer journey from long-term memory after processing
+        journey = get_customer_journey(session_id, user_id)
         logger.info(f"Successfully processed chat request - Session: {session_id}")
-        return ChatResponse(response=response, session_id=session_id)
+        return ChatResponse(response=response, session_id=session_id, state=journey)
     except Exception as e:
         logger.error(f"Error processing chat request - Session: {session_id}, Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
@@ -86,6 +89,19 @@ def chat_request_handler(chat_request: ChatRequest) -> ChatResponse:
 def root():
     """Health check endpoint."""
     return {"status": "ok", "message": "AutoEmporium Chatbot API is running"}
+
+@app.get("/journey/{session_id}")
+def get_journey(session_id: str, user_id: str):
+    """Get the current customer journey (preferences and stage) from long-term memory."""
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    
+    try:
+        journey = get_customer_journey(session_id, user_id)
+        return {"state": journey}
+    except Exception as e:
+        logger.error(f"Error getting customer journey - Session: {session_id}, Error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting customer journey: {str(e)}")
 
 
 class DeleteSessionResponse(BaseModel):

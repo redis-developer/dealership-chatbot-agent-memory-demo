@@ -985,6 +985,142 @@ def build_workflow():
 
 
 
+def get_customer_journey(session_id: str, user_id: str) -> dict:
+    """Get the current customer journey (preferences and stage) from long-term memory conversation context.
+    
+    This function retrieves the customer's journey by searching long-term memory for conversation history
+    and extracting preferences and stage information from the memories. This is for UI representation purposes.
+    
+    Returns:
+        dict: Current customer journey with preferences and stage information
+    """
+    if not memory_client or not user_id:
+        return {
+            "body": None,
+            "seats_min": None,
+            "fuel": None,
+            "brand": None,
+            "model": None,
+            "stage": None,
+            "test_drive_completed": False
+        }
+    
+    try:
+        async def get_journey_from_memory():
+            # Search for customer preferences and journey information from long-term memory
+            user_id_filter = {"eq": user_id} if user_id else None
+            session_id_filter = {"eq": session_id} if session_id else None
+            
+            # Search for preferences
+            preferences_results = await memory_client.search_long_term_memory(
+                text="customer preferences body type seats fuel brand model",
+                user_id=user_id_filter,
+                session_id=session_id_filter,
+                limit=10,
+                distance_threshold=0.7
+            )
+            
+            # Search for stage information
+            stage_results = await memory_client.search_long_term_memory(
+                text="test drive scheduled completed financing stage",
+                user_id=user_id_filter,
+                session_id=session_id_filter,
+                limit=10,
+                distance_threshold=0.7
+            )
+            
+            return preferences_results, stage_results
+        
+        preferences_results, stage_results = run_async(get_journey_from_memory())
+        
+        # Initialize journey state
+        journey = {
+            "body": None,
+            "seats_min": None,
+            "fuel": None,
+            "brand": None,
+            "model": None,
+            "stage": None,
+            "test_drive_completed": False
+        }
+        
+        # Extract preferences from memories
+        if preferences_results and hasattr(preferences_results, 'memories') and preferences_results.memories:
+            for memory in preferences_results.memories:
+                text = memory.text.lower()
+                # Extract body type
+                if not journey["body"]:
+                    for body_type in ["sedan", "suv", "coupe", "convertible", "wagon", "sports car"]:
+                        if body_type in text:
+                            journey["body"] = body_type
+                            break
+                
+                # Extract seats
+                if not journey["seats_min"]:
+                    import re
+                    seats_match = re.search(r'seats?[:\s]+(\d+)', text)
+                    if seats_match:
+                        journey["seats_min"] = int(seats_match.group(1))
+                
+                # Extract fuel type
+                if not journey["fuel"]:
+                    for fuel_type in ["petrol", "diesel", "electric", "hybrid", "plug-in hybrid"]:
+                        if fuel_type in text:
+                            journey["fuel"] = fuel_type
+                            break
+                
+                # Extract brand
+                if not journey["brand"]:
+                    brands = ["mercedes-benz", "bmw", "audi", "jaguar", "land rover", "range rover", 
+                             "volvo", "lexus", "porsche", "bentley", "rolls-royce", "maserati"]
+                    for brand in brands:
+                        if brand in text:
+                            journey["brand"] = brand.title()
+                            break
+                
+                # Extract model
+                if not journey["model"]:
+                    models = ["s-class", "7 series", "a6", "a8", "xf", "discovery", "xc90", "es", 
+                             "cayenne", "continental", "ghost", "ghibli", "evoque"]
+                    for model in models:
+                        if model in text:
+                            journey["model"] = model.title()
+                            break
+        
+        # Extract stage information from memories
+        if stage_results and hasattr(stage_results, 'memories') and stage_results.memories:
+            for memory in stage_results.memories:
+                text = memory.text.lower()
+                
+                # Check for test drive completion
+                if "test drive" in text and "completed" in text:
+                    journey["test_drive_completed"] = True
+                    journey["stage"] = "test_drive"
+                
+                # Check for test drive scheduled
+                elif "test drive" in text and "scheduled" in text:
+                    journey["stage"] = "test_drive"
+                
+                # Check for financing stage
+                elif "financing" in text and "stage" in text:
+                    journey["stage"] = "financing"
+        
+        logger.debug(f"Retrieved customer journey from long-term memory - User: {user_id}, Brand: {journey['brand']}, Model: {journey['model']}, Stage: {journey['stage']}")
+        return journey
+        
+    except Exception as e:
+        logger.warning(f"Error getting customer journey from long-term memory: {str(e)}")
+    
+    return {
+        "body": None,
+        "seats_min": None,
+        "fuel": None,
+        "brand": None,
+        "model": None,
+        "stage": None,
+        "test_drive_completed": False
+    }
+
 def handle_turn(session_id: str, user_id: str, message: str) -> str:
     logger.info(f"Handling turn - Session: {session_id}, User: {user_id}, Message length: {len(message)}")
     

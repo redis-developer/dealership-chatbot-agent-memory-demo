@@ -1,7 +1,7 @@
 import { useChatbot } from '../contexts/ChatbotContext'
 
 const About = () => {
-  const { openChatbot } = useChatbot()
+  const { openFullPageChatbot } = useChatbot()
 
   return (
     <section className="py-20 bg-white">
@@ -27,7 +27,7 @@ const About = () => {
               At Auto Emporium, we pride ourselves on great service, competitive prices, and a hassle-free buying experience. Let us guide you to your perfect automotive match and make your driving dreams a reality.
             </p>
             <button
-              onClick={openChatbot}
+              onClick={openFullPageChatbot}
               className="bg-amber-600 hover:bg-amber-700 text-white px-8 py-3 rounded-lg font-medium transition-colors"
             >
               Start Now

@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import Login from './Login'
 
 const Header = () => {
-  const { openChatbot } = useChatbot()
+  const { openFullPageChatbot } = useChatbot()
   const { userId, logout, isLoggedIn } = useAuth()
   const [showLogin, setShowLogin] = useState(false)
 
@@ -41,7 +41,7 @@ const Header = () => {
                     Logout
                   </button>
                   <button
-                    onClick={openChatbot}
+                    onClick={openFullPageChatbot}
                     className="bg-amber-600 hover:bg-amber-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
                   >
                     Start Now
