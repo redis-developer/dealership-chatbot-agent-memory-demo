@@ -50,25 +50,25 @@ class State(TypedDict):
 
 
 # Initialize Redis checkpointer for state persistence
-redis_uri = os.getenv("REDIS_URL") or os.getenv("REDIS_URI")
+redis_url = os.getenv("REDIS_URL")
 checkpointer = None
 checkpointer_cm = None  # Keep reference to context manager
 
-if not redis_uri:
-    logger.warning("REDIS_URL or REDIS_URI not found in environment variables. State persistence will not work.")
+if not redis_url:
+    logger.warning("REDIS_URL not found in environment variables. State persistence will not work.")
 else:
     try:
         # Use context manager to call setup() for initialization
         # This initializes the Redis indices needed for checkpoints
         # Following the pattern from: https://github.com/redis-developer/langgraph-apps-with-redis
-        with RedisSaver.from_conn_string(redis_uri) as temp_checkpointer:
+        with RedisSaver.from_conn_string(redis_url) as temp_checkpointer:
             temp_checkpointer.setup()
             logger.info("Redis checkpointer indices initialized successfully")
         
         # Create checkpointer context manager and enter it to get the actual checkpointer object
         # We need to keep the context manager open for the lifetime of the application
         # so we store both the context manager and the entered checkpointer
-        checkpointer_cm = RedisSaver.from_conn_string(redis_uri)
+        checkpointer_cm = RedisSaver.from_conn_string(redis_url)
         checkpointer = checkpointer_cm.__enter__()
         logger.info("Redis checkpointer initialized successfully")
     except Exception as e:
@@ -1331,7 +1331,7 @@ def delete_all_sessions() -> bool:
     Returns:
         bool: True if deletion was successful, False otherwise
     """
-    if not redis_uri:
+    if not redis_url:
         logger.warning("Cannot delete all sessions: Redis URI not configured")
         return False
     
@@ -1339,7 +1339,7 @@ def delete_all_sessions() -> bool:
         logger.warning("Deleting ALL Redis checkpoint entries and long-term memories - this action cannot be undone")
         
         # Create a Redis client directly from the connection string
-        redis_client = redis.from_url(redis_uri, decode_responses=False)
+        redis_client = redis.from_url(redis_url, decode_responses=False)
         
         total_deleted = 0
         

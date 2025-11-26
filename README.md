@@ -1,143 +1,140 @@
-# Dealership Chatbot Frontend
+# Car Dealership Agent with Redis Agent Memory Server
 
-A modern React frontend application for a dealership website built with React 18, Vite, TypeScript, and Tailwind CSS.
+Car dealership AI agent demonstrates how Redis Agent Memory Server enables long-term memory and conversation context retrieval, allowing the agent to remember customer preferences across sessions and provide personalized car purchase assistance.
 
-## Features
+## Table of Contents
 
-- 🚀 **React 18** - Latest React features
-- ⚡ **Vite** - Fast build tool and dev server
-- 📘 **TypeScript** - Type-safe development
-- 🎨 **Tailwind CSS** - Utility-first CSS framework
-- 💬 **Floating Chatbot Button** - Bottom-right floating button for chatbot interaction
+- [Demo Objectives](#demo-objectives)
+- [Setup](#setup)
+- [Running the Demo](#running-the-demo)
+- [Architecture](#architecture)
+- [Resources](#resources)
+- [Maintainers](#maintainers)
+- [License](#license)
 
-## Getting Started
+## Demo Objectives
 
-### Prerequisites
+- Demonstrate long-term memory storage using Redis Agent Memory Server
+- Demonstrate short-term/working memory storage using LangGraph checkpointers and Redis Agent Memory Server
+- Showcase conversation context retrieval for personalized interactions
+- Show agentic orchestration with LangGraph workflow stages
 
-- Node.js (v18 or higher recommended)
-- npm or yarn
-- Python 3.11
+## Setup
 
-### Installation
+### Dependencies
 
-1. Install dependencies:
-```bash
-npm install
-```
+- Python 3.11+
+- Node.js 18+
+- Docker (for Redis Stack and Agent Memory Server)
 
-2. Start the development server:
-```bash
-npm run dev
-```
+### Configuration
 
-3. Open your browser and navigate to `http://localhost:5173`
-
-### Build for Production
+Clone the repository:
 
 ```bash
-npm run build
+git clone <repository-url>
+cd dealership-chatbot-agent-memory-demo
 ```
 
-The built files will be in the `dist` directory.
-
-### Preview Production Build
+Create a `.env` file in the project root:
 
 ```bash
-npm run preview
-```
-
-## Project Structure
-
-```
-├── src/
-│   ├── components/
-│   │   ├── Header.tsx          # Navigation header
-│   │   ├── Hero.tsx            # Hero section with "Drive Your Dream"
-│   │   ├── Features.tsx        # Service features grid
-│   │   ├── About.tsx           # About section
-│   │   ├── Services.tsx        # Services list section
-│   │   └── ChatbotButton.tsx   # Floating chatbot button
-│   ├── App.tsx                 # Main app component
-│   ├── main.tsx               # React entry point
-│   └── index.css              # Global styles with Tailwind
-├── index.html                 # HTML template
-├── vite.config.ts            # Vite configuration
-├── tsconfig.json             # TypeScript configuration
-├── tailwind.config.js        # Tailwind CSS configuration
-└── package.json              # Dependencies and scripts
-```
-
-## Components
-
-### Header
-Navigation bar with logo, menu items, and "Start Now" button.
-
-### Hero
-Full-screen hero section with "Drive Your Dream" messaging and car imagery.
-
-### Features
-Grid of four service features:
-- Comprehensive Inspection
-- Affordable Financing
-- Extended Warranty
-- 24/7 Support
-
-### About
-Two-column layout showcasing Auto Emporium with image and description.
-
-### Services
-Dark-themed section with service list and car imagery.
-
-### ChatbotButton
-Floating button in the bottom-right corner that opens/closes a chatbot interface.
-
-## Customization
-
-### Images
-Replace placeholder images in:
-- `Hero.tsx` - Hero section background and car image
-- `About.tsx` - Car image in about section
-- `Services.tsx` - Car image in services section
-
-### Chatbot Integration
-The `ChatbotButton` component is connected to a FastAPI backend that uses LangChain with memory capabilities. The "Start Now" buttons throughout the site will open the chatbot interface.
-
-#### Backend Setup
-
-1. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Set up environment variables (create a `.env` file):
-```bash
-OPENAI_API_KEY=your-openai-api-key-here
+OPENAI_API_KEY=your_openai_api_key_here
+REDIS_URL=<redis-cloud-url>
 MEMORY_SERVER_URL=http://localhost:8000
-VITE_API_URL=http://localhost:8001
 ```
 
-3. Start the FastAPI backend:
+## Running the Demo
+
+![Landing Page](images/landing-page.png)
+![Chatbot Interface](images/chatbot-interface.png)
+
+
+### 1. Agent Memory Server Setup
+
+Get the Pre-built Docker Images from https://hub.docker.com/r/redislabs/agent-memory-server
+
+Quick Start: Run the API Server (Requires Separate Redis)
+
+# Replace <redis-cloud-url> with your Redis connection string
+# Replace your-key with your OpenAI API key
 ```bash
-python api.py
+docker run -p 8000:8000 \
+  -e REDIS_URL=<redis-cloud-url> \
+  -e OPENAI_API_KEY=your-key \
+  redislabs/agent-memory-server:latest
 ```
 
-The API will run on `http://localhost:8001` by default.
+Environment Variables
+REDIS_URL: The connection string for your Redis instance (e.g., from Redis Cloud)
+OPENAI_API_KEY: Your OpenAI API key for memory extraction and embedding
+Notes
+This command starts only the Agent Memory Server API. You must have a running Redis instance accessible at the URL you provide.
+For more advanced configuration, see the full documentation: https://github.com/redis-developer/agent-memory-server
 
-#### Running the Full Stack
+2. Docker Setup
 
-1. Start the backend (in one terminal):
 ```bash
-python api.py
+# Start all services with Docker
+docker-compose up --build
+
+# Access the application
+# Frontend: http://localhost:3000
+# Backend: http://localhost:8001
 ```
 
-2. Start the frontend (in another terminal):
-```bash
-npm run dev
+## Architecture
+
+**Workflow Orchestration (LangGraph)**: Manages conversation state and guides customers through the car purchase journey
+
+**Short-Term Memory (Redis Agent Memory Server Working Memory)**: Maintains working memory of the ongoing conversation
+
+**Long-Term Memory (Redis Agent Memory Server)**: Stores customer preferences and conversation history across sessions
+
+**Slot-Filling (LangChain)**: Automatically extracts car preferences from natural conversation
+
+**Modern Frontend (React 18 + TypeScript + Tailwind)**: Beautiful, responsive dealership UI with full-page chatbot interface
+
+### Architecture Flow
+
+```
+User Query
+    ↓
+[Retrieve Conversation Context] → Load past preferences from long-term memory
+    ↓
+[Parse Slots] → Extract car preferences using LLM
+    ↓
+[Ensure Readiness] → Check if all required slots are filled
+    ↓
+[Decide Next]
+    ├→ Missing slots? → Ask follow-up question
+    └→ All slots filled? → Advance to next stage
+         ↓
+    [Workflow Stages]
+         ├→ Brand Selected? → Suggest Models
+         ├→ Model Selected? → Suggest Test Drive
+         ├→ Test Drive Completed? → Suggest Financing
+         └→ Financing Discussed? → Prepare for Delivery
+         ↓
+    [Save to Memory] → Store conversation and preferences to working & long-term memory
+         ↓
+    Response to User
+         ↓
+    [UI Updates] → Update workflow visualization
 ```
 
-3. Open `http://localhost:5173` in your browser
+
+## Resources
+
+- [Redis Agent Memory Server](https://github.com/redis/agent-memory-server)
+- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
+- [LangChain Documentation](https://python.langchain.com/)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+
+## Maintainers
+
+Bhavana Giri — bhavanagiri
 
 ## License
 
-MIT
-
+This project is licensed under the MIT License.

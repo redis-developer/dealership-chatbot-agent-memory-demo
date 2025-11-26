@@ -10,7 +10,6 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MEMORY_SERVER_URL=${MEMORY_SERVER_URL:-http://host.docker.internal:8000}
       - REDIS_URL=${REDIS_URL}
-      - REDIS_URI=${REDIS_URI}
     volumes:
       - ./logs:/app/logs
       - ./.env:/app/.env
