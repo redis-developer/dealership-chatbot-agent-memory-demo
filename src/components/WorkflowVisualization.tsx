@@ -84,73 +84,80 @@ const WorkflowVisualization = ({ state }: WorkflowVisualizationProps) => {
       {/* Workflow Stages */}
       <div 
         ref={trackerRef}
-        className={`space-y-4 transition-all duration-500 ${
+        className={`transition-all duration-500 ${
           isHighlighted ? 'bg-amber-100 p-4 rounded-lg border-2 border-amber-400 shadow-lg' : ''
         }`}
       >
-        <h3 className={`text-lg font-semibold mb-4 transition-colors ${
+        <h3 className={`text-lg font-semibold mb-6 transition-colors ${
           isHighlighted ? 'text-amber-700' : 'text-gray-700'
         }`}>
           Progress Tracker
         </h3>
-        {stages.map((stage, idx) => {
-          const isActive = stage.completed
-          const isNext = !stage.completed && idx > 0 && stages[idx - 1].completed
-          
-          return (
-            <div key={stage.id} className="relative">
-              {/* Connector Line */}
-              {idx < stages.length - 1 && (
-                <div className={`absolute left-6 top-12 w-0.5 h-8 ${
-                  isActive ? 'bg-amber-500' : 'bg-gray-300'
-                }`} />
-              )}
-              
-              {/* Stage Card */}
-              <div className={`relative flex items-start space-x-4 p-4 rounded-lg border-2 transition-all ${
-                isActive 
-                  ? 'bg-amber-50 border-amber-500 shadow-md' 
-                  : isNext
-                  ? 'bg-gray-50 border-gray-300'
-                  : 'bg-white border-gray-200 opacity-60'
-              }`}>
-                {/* Status Icon */}
-                <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center ${
-                  isActive 
-                    ? 'bg-amber-500 text-white' 
-                    : 'bg-gray-300 text-gray-600'
-                }`}>
-                  {isActive ? (
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : (
-                    <span className="text-xl font-bold">{idx + 1}</span>
-                  )}
-                </div>
+        <div className="space-y-0">
+          {stages.map((stage, idx) => {
+            const isActive = stage.completed
+            const isNext = !stage.completed && idx > 0 && stages[idx - 1].completed
+            const isPending = !isActive && !isNext
+            
+            return (
+              <div key={stage.id} className="relative">
+                {/* Connector Line */}
+                {idx < stages.length - 1 && (
+                  <div className={`absolute left-5 top-10 w-0.5 ${
+                    isActive ? 'bg-purple-600 h-12' : 'bg-gray-300 h-12'
+                  }`} />
+                )}
                 
-                {/* Content */}
-                <div className="flex-1">
-                  <h4 className={`font-semibold mb-1 ${
-                    isActive ? 'text-amber-700' : 'text-gray-600'
+                {/* Stage Item */}
+                <div className={`relative flex items-start space-x-4 py-2 transition-all ${
+                  isNext ? 'bg-gray-50 rounded-lg px-4 py-3 -mx-2 shadow-sm' : ''
+                }`}>
+                  {/* Status Icon */}
+                  <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                    isActive 
+                      ? 'bg-purple-600 text-white' 
+                      : isPending
+                      ? 'bg-white border-2 border-gray-300'
+                      : 'bg-white border-2 border-purple-600'
                   }`}>
-                    {stage.title}
-                  </h4>
-                  {stage.value && (
-                    <p className="text-sm font-medium text-gray-800 mb-2">
-                      {stage.value}
+                    {isActive ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <span className={`text-sm font-bold ${
+                        isPending ? 'text-gray-400' : 'text-purple-600'
+                      }`}>
+                        {idx + 1}
+                      </span>
+                    )}
+                  </div>
+                  
+                  {/* Content */}
+                  <div className="flex-1 pt-0.5">
+                    <h4 className={`font-semibold mb-0.5 ${
+                      isActive || isNext ? 'text-gray-800' : 'text-gray-400'
+                    }`}>
+                      {stage.title}
+                    </h4>
+                    {stage.value && (
+                      <p className={`text-sm mb-1 ${
+                        isActive || isNext ? 'text-gray-600' : 'text-gray-400'
+                      }`}>
+                        {stage.value}
+                      </p>
+                    )}
+                    <p className={`text-xs ${
+                      isActive || isNext ? 'text-gray-500' : 'text-gray-400'
+                    }`}>
+                      {stage.witty}
                     </p>
-                  )}
-                  <p className={`text-xs italic ${
-                    isActive ? 'text-amber-600' : 'text-gray-500'
-                  }`}>
-                    {stage.witty}
-                  </p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
       </div>
     </div>
   )

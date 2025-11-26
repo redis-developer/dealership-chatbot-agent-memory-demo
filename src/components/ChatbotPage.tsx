@@ -43,6 +43,7 @@ const ChatbotPage = () => {
     stage: null,
     test_drive_completed: false
   })
+  const [isDeleting, setIsDeleting] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -141,6 +142,51 @@ const ChatbotPage = () => {
   useEffect(() => {
     fetchState()
   }, [sessionId, userId])
+
+  const handleDeleteAllSessions = async () => {
+    if (!confirm('Are you sure you want to delete ALL sessions? This action cannot be undone.')) {
+      return
+    }
+
+    setIsDeleting(true)
+    try {
+      const response = await fetch(`${API_URL}/sessions/all`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to delete sessions')
+      }
+
+      const data = await response.json()
+      alert(data.message || 'All sessions deleted successfully')
+      
+      // Clear local session storage
+      sessionStorage.removeItem('autoemporium_session_id')
+      setSessionId(generateSessionId())
+      setMessages([{
+        role: 'assistant',
+        content: 'Hello! I\'m your AutoEmporium assistant. How can I help you find your perfect car today?'
+      }])
+      setState({
+        body: null,
+        seats_min: null,
+        fuel: null,
+        brand: null,
+        model: null,
+        stage: null,
+        test_drive_completed: false
+      })
+    } catch (error) {
+      console.error('Error deleting sessions:', error)
+      alert('Failed to delete sessions. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   if (!userId) {
     return null
@@ -243,8 +289,26 @@ const ChatbotPage = () => {
         </div>
 
         {/* Workflow Visualization - Right Side */}
-        <div className="w-96 bg-gradient-to-b from-white via-gray-50 to-white border-l-2 border-gray-200 overflow-y-auto shadow-inner">
+        <div className="w-96 bg-gradient-to-b from-white via-gray-50 to-white border-l-2 border-gray-200 overflow-y-auto shadow-inner relative">
           <WorkflowVisualization state={state} />
+          
+          {/* Delete All Sessions Button */}
+          <button
+            onClick={handleDeleteAllSessions}
+            disabled={isDeleting}
+            className="absolute bottom-4 right-4 bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-110 active:scale-95"
+            title="Delete all sessions"
+          >
+            {isDeleting ? (
+              <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            )}
+          </button>
         </div>
       </div>
     </div>
