@@ -212,7 +212,7 @@ Extract the following slots:
 - transmission_ban: List of transmission types the user does NOT want (e.g., ["manual"]). Extract from phrases like "no manual", "don't want manual", "avoid manual", "only automatic"
 - brand: Luxury car brand as string (e.g., "Mercedes-Benz", "BMW", "Audi", "Jaguar", "Land Rover", "Volvo", "Lexus", "Porsche", "Bentley", "Rolls-Royce", "Maserati", "Range Rover"). Extract brand names mentioned
 - model: Luxury car model as string (e.g., "S-Class", "5 Series", "A6", "XF", "Discovery", "XC90", "ES", "Cayenne", "Continental", "Ghost", "Ghibli", "Evoque"). Extract model names mentioned
-- test_drive_completed: Boolean - set to true if user mentions they completed the test drive, loved it, enjoyed it, or said they're ready to proceed after test drive. Extract from phrases like "test drive done", "completed test drive", "test drive was great", "i loved it", "loved it", "it was amazing", "i enjoyed it", "ready to buy", "let's proceed", "I've driven it", "test drive is completed, i loved it"
+- test_drive_completed: Boolean - set to true if user mentions they completed the test drive, loved it, enjoyed it, or said they're ready to proceed after test drive. Extract from phrases like "test drive done", "test drive is done", "test drive is complete", "completed test drive", "test drive was great", "i loved it", "loved it", "it was amazing", "i enjoyed it", "ready to buy", "let's proceed", "let's go ahead", "I've driven it", "test drive is completed, i loved it", "done with test drive", "finished test drive"
 
 Return JSON format:
 {{
@@ -914,7 +914,7 @@ def route_after_respond(state: State) -> str:
     """Route after respond based on ensure_readiness decision.
     
     If need_clarification is True: loop back to parse_slots to continue asking questions.
-    If test drive is completed: advance to financing suggestion.
+    If test drive is completed: advance to financing suggestion (priority check).
     If model is decided: advance to test drive suggestion.
     Otherwise: advance to next stage.
     """
@@ -929,8 +929,8 @@ def route_after_respond(state: State) -> str:
         # Note: This will wait for user's next message in the next turn
         logger.debug("Looping back to parse_slots (clarification needed)")
         return END  # End this turn, user will respond, then next turn goes through parse_slots again
-    elif test_drive_completed and current_stage == "test_drive":
-        # Test drive is completed, advance to financing
+    elif test_drive_completed:
+        # Test drive is completed, advance to financing 
         logger.debug("Test drive completed - Advancing to financing suggestion")
         return "suggest_financing"
     elif model and current_stage != "test_drive" and current_stage != "financing":
@@ -993,251 +993,12 @@ def build_workflow():
 
 
 
-def get_customer_journey(session_id: str, user_id: str) -> dict:
-    """Get the current customer journey (preferences and stage) from long-term memory conversation context.
-    
-    This function retrieves the customer's journey by searching long-term memory for conversation history
-    and extracting preferences and stage information from the memories. This is for UI representation purposes.
-    First tries to get from LangGraph checkpoints (most reliable), then falls back to long-term memory.
+def handle_turn(session_id: str, user_id: str, message: str) -> tuple[str, dict]:
+    """Handle a conversation turn and return both response and journey state.
     
     Returns:
-        dict: Current customer journey with preferences and stage information
+        tuple: (response_string, journey_dict)
     """
-    # Initialize journey state
-    journey = {
-        "body": None,
-        "seats_min": None,
-        "fuel": None,
-        "brand": None,
-        "model": None,
-        "stage": None,
-        "test_drive_completed": False
-    }
-    
-    # First, try to get from LangGraph checkpoints (most reliable source)
-    thread_id = session_id or f"user_{user_id or 'unknown'}"
-    if checkpointer:
-        try:
-            graph = build_workflow()
-            config = {"configurable": {"thread_id": thread_id}}
-            checkpoint = graph.get_state(config)
-            if checkpoint and checkpoint.values:
-                state = checkpoint.values
-                journey["body"] = state.get("body")
-                journey["seats_min"] = state.get("seats_min")
-                journey["fuel"] = state.get("fuel")
-                journey["brand"] = state.get("brand")
-                journey["model"] = state.get("model")
-                journey["stage"] = state.get("stage")
-                journey["test_drive_completed"] = state.get("test_drive_completed", False)
-                
-                # If we got brand and model from checkpoints, we're done
-                if journey["brand"] and journey["model"]:
-                    logger.debug(f"Retrieved customer journey from checkpoints - User: {user_id}, Brand: {journey['brand']}, Model: {journey['model']}, Stage: {journey['stage']}")
-                    return journey
-        except Exception as e:
-            logger.debug(f"Could not get journey from checkpoints: {str(e)}, falling back to long-term memory")
-    
-    # Fall back to long-term memory if checkpoints don't have complete info
-    if not memory_client or not user_id:
-        return journey
-    
-    try:
-        async def get_journey_from_memory():
-            # Search for customer preferences and journey information from long-term memory
-            user_id_filter = {"eq": user_id} if user_id else None
-            session_id_filter = {"eq": session_id} if session_id else None
-            
-            # Search for preferences
-            preferences_results = await memory_client.search_long_term_memory(
-                text="customer preferences body type seats fuel brand model",
-                user_id=user_id_filter,
-                session_id=session_id_filter,
-                limit=10,
-                distance_threshold=0.7
-            )
-            
-            # Search for stage information
-            stage_results = await memory_client.search_long_term_memory(
-                text="test drive scheduled completed financing stage",
-                user_id=user_id_filter,
-                session_id=session_id_filter,
-                limit=10,
-                distance_threshold=0.7
-            )
-            
-            return preferences_results, stage_results
-        
-        preferences_results, stage_results = run_async(get_journey_from_memory())
-        
-        # Extract preferences from memories (only if not already set from checkpoints)
-        if preferences_results and hasattr(preferences_results, 'memories') and preferences_results.memories:
-            for memory in preferences_results.memories:
-                text = memory.text.lower()
-                # Extract body type
-                if not journey["body"]:
-                    for body_type in ["sedan", "suv", "coupe", "convertible", "wagon", "sports car"]:
-                        if body_type in text:
-                            journey["body"] = body_type
-                            break
-                
-                # Extract seats
-                if not journey["seats_min"]:
-                    import re
-                    seats_match = re.search(r'seats?[:\s]+(\d+)', text)
-                    if seats_match:
-                        journey["seats_min"] = int(seats_match.group(1))
-                
-                # Extract fuel type
-                if not journey["fuel"]:
-                    for fuel_type in ["petrol", "diesel", "electric", "hybrid", "plug-in hybrid"]:
-                        if fuel_type in text:
-                            journey["fuel"] = fuel_type
-                            break
-                
-                # Extract brand
-                if not journey["brand"]:
-                    brands = ["mercedes-benz", "bmw", "audi", "jaguar", "land rover", "range rover", 
-                             "volvo", "lexus", "porsche", "bentley", "rolls-royce", "maserati"]
-                    for brand in brands:
-                        if brand in text:
-                            journey["brand"] = brand.title()
-                            break
-                
-                # Note: Brand and model are extracted from stage memories (more reliable)
-                # Only extract from preferences if not found in stage memories
-                if not journey["model"]:
-                    models = ["s-class", "7 series", "a6", "a8", "Q8", "xf", "discovery", "xc90", "es", 
-                             "cayenne", "continental", "ghost", "ghibli", "evoque"]
-                    for model in models:
-                        if model in text:
-                            journey["model"] = model.title()
-                            break
-        
-        # Extract stage information and brand/model from memories
-        # Prioritize stage memories as they contain the most recent and accurate brand/model info
-        if stage_results and hasattr(stage_results, 'memories') and stage_results.memories:
-            # Process memories in order (most recent first)
-            for memory in stage_results.memories:
-                text = memory.text
-                text_lower = text.lower()
-                
-                # First, try to extract brand/model from entities (most reliable)
-                if hasattr(memory, 'entities') and memory.entities:
-                    entities = memory.entities
-                    # Stage memories typically have 2 entities: brand and model
-                    # They're stored in order: [brand, model] or just the values
-                    valid_entities = [e for e in entities if e and isinstance(e, str) and e != "Unknown"]
-                    if len(valid_entities) >= 2:
-                        # Assume first is brand, second is model
-                        potential_brand = valid_entities[0]
-                        potential_model = valid_entities[1]
-                        
-                        # Verify brand
-                        brand_lower = potential_brand.lower()
-                        known_brands = ["mercedes-benz", "bmw", "audi", "jaguar", "land rover", "range rover", 
-                                       "volvo", "lexus", "porsche", "bentley", "rolls-royce", "maserati"]
-                        is_valid_brand = any(brand in brand_lower or brand_lower in brand for brand in known_brands)
-                        
-                        if is_valid_brand:
-                            if not journey["brand"]:
-                                journey["brand"] = potential_brand.title() if potential_brand != potential_brand.upper() else potential_brand
-                            if not journey["model"]:
-                                journey["model"] = potential_model.title() if potential_model != potential_model.upper() else potential_model
-                
-                # If brand/model not found in entities, extract from text
-                # Stage memory text format: "Customer is at test drive stage for {brand} {model}."
-                if not journey["brand"] or not journey["model"]:
-                    # Look for pattern: "for {brand} {model}" or "for {brand} {model}."
-                    # This is the most common pattern in stage memories
-                    for_pattern = re.search(r'for\s+([A-Za-z][A-Za-z\s-]+?)\s+([A-Za-z0-9][A-Za-z0-9\s-]+?)(?:\.|$)', text, re.IGNORECASE)
-                    if for_pattern:
-                        potential_brand = for_pattern.group(1).strip()
-                        potential_model = for_pattern.group(2).strip()
-                        
-                        # Verify brand
-                        brand_lower = potential_brand.lower()
-                        known_brands = ["mercedes-benz", "bmw", "audi", "jaguar", "land rover", "range rover", 
-                                       "volvo", "lexus", "porsche", "bentley", "rolls-royce", "maserati"]
-                        is_valid_brand = any(brand in brand_lower or brand_lower in brand for brand in known_brands)
-                        
-                        if is_valid_brand:
-                            if not journey["brand"]:
-                                journey["brand"] = potential_brand.title() if potential_brand != potential_brand.upper() else potential_brand
-                            if not journey["model"]:
-                                journey["model"] = potential_model.title() if potential_model != potential_model.upper() else potential_model
-                    else:
-                        # Fallback: try to extract brand and model separately
-                        if not journey["brand"]:
-                            known_brands = ["mercedes-benz", "bmw", "audi", "jaguar", "land rover", "range rover", 
-                                           "volvo", "lexus", "porsche", "bentley", "rolls-royce", "maserati"]
-                            for brand in known_brands:
-                                if brand in text_lower:
-                                    # Find the brand in the original text (preserve case)
-                                    brand_match = re.search(rf'\b({re.escape(brand)}[-\s]?\w*)\b', text, re.IGNORECASE)
-                                    if brand_match:
-                                        journey["brand"] = brand_match.group(1).title() if brand_match.group(1) != brand_match.group(1).upper() else brand_match.group(1)
-                                        break
-                        
-                        if not journey["model"]:
-                            # Look for model patterns after the brand
-                            # Common patterns: "7 Series", "A8", "Q8", "S-Class", "XF", etc.
-                            model_patterns = [
-                                r'(\d+\s*[Ss]eries)',  # e.g., "7 Series"
-                                r'([A-Z]\d+)',  # e.g., "A8", "X5", "Q8"
-                                r'([A-Z]-[Cc]lass)',  # e.g., "S-Class"
-                                r'\b([A-Z][A-Za-z]+)\b',  # e.g., "XF", "Discovery"
-                            ]
-                            for pattern in model_patterns:
-                                match = re.search(pattern, text)
-                                if match:
-                                    potential_model = match.group(1)
-                                    # Make sure it's not a brand
-                                    brand_lower = potential_model.lower()
-                                    known_brands = ["mercedes-benz", "bmw", "audi", "jaguar", "land rover", "range rover", 
-                                                   "volvo", "lexus", "porsche", "bentley", "rolls-royce", "maserati"]
-                                    is_brand = any(brand in brand_lower for brand in known_brands)
-                                    if not is_brand:
-                                        journey["model"] = potential_model
-                                        break
-                
-                # Check for test drive completion
-                if "test drive" in text_lower and "completed" in text_lower:
-                    journey["test_drive_completed"] = True
-                    if not journey["stage"]:
-                        journey["stage"] = "test_drive"
-                
-                # Check for test drive scheduled
-                elif "test drive" in text_lower and "scheduled" in text_lower:
-                    if not journey["stage"]:
-                        journey["stage"] = "test_drive"
-                
-                # Check for financing stage
-                elif "financing" in text_lower and "stage" in text_lower:
-                    if not journey["stage"]:
-                        journey["stage"] = "financing"
-                
-                # If we found brand and model, we can break (most recent memory has the current state)
-                if journey["brand"] and journey["model"]:
-                    break
-        
-        logger.debug(f"Retrieved customer journey - User: {user_id}, Brand: {journey['brand']}, Model: {journey['model']}, Stage: {journey['stage']}")
-        return journey
-        
-    except Exception as e:
-        logger.warning(f"Error getting customer journey from long-term memory: {str(e)}")
-    
-    return {
-        "body": None,
-        "seats_min": None,
-        "fuel": None,
-        "brand": None,
-        "model": None,
-        "stage": None,
-        "test_drive_completed": False
-    }
-
-def handle_turn(session_id: str, user_id: str, message: str) -> str:
     logger.info(f"Handling turn - Session: {session_id}, User: {user_id}, Message length: {len(message)}")
     
     # Use session_id as thread_id for Redis checkpointer
@@ -1315,9 +1076,21 @@ def handle_turn(session_id: str, user_id: str, message: str) -> str:
         final_state = graph.invoke(initial_state, config=config)
         
         response = final_state.get("response", "I'm processing your request.")
+        
+        # Extract journey from final state (uses conversation context retrieved by retrieve_conversation_context)
+        journey = {
+            "body": final_state.get("body"),
+            "seats_min": final_state.get("seats_min"),
+            "fuel": final_state.get("fuel"),
+            "brand": final_state.get("brand"),
+            "model": final_state.get("model"),
+            "stage": final_state.get("stage"),
+            "test_drive_completed": final_state.get("test_drive_completed", False)
+        }
+        
         logger.info(f"Turn completed - Session: {session_id}, Response length: {len(response) if response else 0}")
         logger.debug(f"State persisted for thread_id: {thread_id} - Body: {final_state.get('body')}")
-        return response
+        return response, journey
     except Exception as e:
         logger.error(f"Error in handle_turn - Session: {session_id}, Error: {str(e)}", exc_info=True)
         raise

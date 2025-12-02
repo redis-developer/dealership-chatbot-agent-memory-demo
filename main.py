@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from langchain_openai import ChatOpenAI
-from orchestrator import handle_turn, delete_all_sessions, get_customer_journey
+from orchestrator import handle_turn, delete_all_sessions, build_workflow
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
@@ -75,9 +75,8 @@ def chat_request_handler(chat_request: ChatRequest) -> ChatResponse:
     logger.info(f"Received chat request - Session: {session_id}, User: {user_id}, Message: {chat_request.message[:100]}...")
     
     try:
-        response = handle_turn(session_id, user_id, chat_request.message)
-        # Get current customer journey from long-term memory after processing
-        journey = get_customer_journey(session_id, user_id)
+        # handle_turn now returns both response and journey (from state with conversation context)
+        response, journey = handle_turn(session_id, user_id, chat_request.message)
         logger.info(f"Successfully processed chat request - Session: {session_id}")
         return ChatResponse(response=response, session_id=session_id, state=journey)
     except Exception as e:
@@ -92,13 +91,47 @@ def root():
 
 @app.get("/journey/{session_id}")
 def get_journey(session_id: str, user_id: str):
-    """Get the current customer journey (preferences and stage) from long-term memory."""
+    """Get the current customer journey from checkpoint state.
+    
+    The checkpoint state already contains conversation context retrieved by 
+    retrieve_conversation_context during workflow execution.
+    """
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
     
     try:
-        journey = get_customer_journey(session_id, user_id)
-        return {"state": journey}
+        thread_id = session_id or f"user_{user_id or 'unknown'}"
+        empty_journey = {
+            "body": None,
+            "seats_min": None,
+            "fuel": None,
+            "brand": None,
+            "model": None,
+            "stage": None,
+            "test_drive_completed": False
+        }
+        
+        graph = build_workflow()
+        config = {"configurable": {"thread_id": thread_id}}
+        checkpoint = graph.get_state(config)
+        
+        if checkpoint and checkpoint.values:
+            state = checkpoint.values
+            # State already has conversation_context from retrieve_conversation_context
+            journey = {
+                "body": state.get("body"),
+                "seats_min": state.get("seats_min"),
+                "fuel": state.get("fuel"),
+                "brand": state.get("brand"),
+                "model": state.get("model"),
+                "stage": state.get("stage"),
+                "test_drive_completed": state.get("test_drive_completed", False)
+            }
+            logger.debug(f"Retrieved customer journey from checkpoint - User: {user_id}, Brand: {journey['brand']}, Model: {journey['model']}, Stage: {journey['stage']}")
+            return {"state": journey}
+        else:
+            logger.debug(f"No checkpoint found for thread_id: {thread_id}")
+            return {"state": empty_journey}
     except Exception as e:
         logger.error(f"Error getting customer journey - Session: {session_id}, Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error getting customer journey: {str(e)}")
