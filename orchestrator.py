@@ -12,7 +12,7 @@ import re
 import redis
 from datetime import datetime, timedelta
 from agent_memory_client import create_memory_client, MemoryAPIClient, MemoryClientConfig
-from agent_memory_client.models import WorkingMemory, MemoryMessage, ClientMemoryRecord, MemoryTypeEnum
+from agent_memory_client.models import WorkingMemory, MemoryMessage
 import asyncio
 
 load_dotenv()
@@ -52,7 +52,8 @@ class State(TypedDict):
 # Initialize Redis checkpointer for state persistence
 redis_url = os.getenv("REDIS_URL")
 checkpointer = None
-checkpointer_cm = None  # Keep reference to context manager
+checkpointer_cm = None
+
 
 if not redis_url:
     logger.warning("REDIS_URL not found in environment variables. State persistence will not work.")
@@ -839,71 +840,6 @@ def save_to_working_memory(state: State) -> State:
         result = run_async(append_messages())
         if result:
             logger.debug(f"Working memory updated successfully for session {session_id}")
-        
-        current_stage = state.get("stage")
-        test_drive_completed = state.get("test_drive_completed", False)
-        brand = state.get("brand", "Unknown")
-        model = state.get("model", "Unknown")
-        
-        # Track important preferences and stage transitions
-        preferences_memories_to_store = []
-        stage_memories_to_store = []
-        
-        if current_stage == "test_drive":
-            # Test drive has been scheduled
-            stage_memory_text = f"Customer is at test drive stage for {brand} {model}. Test drive has been scheduled."
-            # Filter out None values from entities
-            entities_list = [e for e in [brand, model] if e and e != "Unknown"]
-            stage_memories_to_store.append(ClientMemoryRecord(
-                text=stage_memory_text,
-                user_id=user_id,
-                session_id=session_id,
-                memory_type=MemoryTypeEnum.SEMANTIC,
-                topics=["car_purchase", "stage", "test_drive", "scheduled"],
-                entities=entities_list
-            ))
-        
-        if test_drive_completed:
-            # Test drive has been completed
-            test_drive_memory_text = f"Customer completed test drive for {brand} {model}."
-            # Filter out None values from entities
-            entities_list = [e for e in [brand, model] if e and e != "Unknown"]
-            stage_memories_to_store.append(ClientMemoryRecord(
-                text=test_drive_memory_text,
-                user_id=user_id,
-                session_id=session_id,
-                memory_type=MemoryTypeEnum.SEMANTIC,
-                topics=["car_purchase", "stage", "test_drive", "completed"],
-                entities=entities_list
-            ))
-        
-        if current_stage == "financing":
-            # Customer is at financing stage
-            financing_memory_text = f"Customer is at financing stage for {brand} {model}."
-            if test_drive_completed:
-                financing_memory_text = f"Customer completed test drive for {brand} {model} and is now at financing stage."
-            # Filter out None values from entities
-            entities_list = [e for e in [brand, model] if e and e != "Unknown"]
-            stage_memories_to_store.append(ClientMemoryRecord(
-                text=financing_memory_text,
-                user_id=user_id,
-                session_id=session_id,
-                memory_type=MemoryTypeEnum.SEMANTIC,
-                topics=["car_purchase", "stage", "financing"],
-                entities=entities_list
-            ))
-        
-        # Store all preferences and stage memories
-        all_memories_to_store = preferences_memories_to_store + stage_memories_to_store
-        if all_memories_to_store:
-            async def save_memories():
-                result = await memory_client.create_long_term_memory(all_memories_to_store)
-                logger.info(f"Stored {len(all_memories_to_store)} memory/memories for user {user_id} ({len(preferences_memories_to_store)} preferences, {len(stage_memories_to_store)} stage)")
-                return result
-            
-            memory_result = run_async(save_memories())
-            if memory_result:
-                logger.debug(f"Memories stored successfully for user {user_id}")
         
     except Exception as e:
         logger.warning(f"Error saving to working memory: {str(e)}", exc_info=True)

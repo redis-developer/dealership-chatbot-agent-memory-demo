@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useChatbot } from '../contexts/ChatbotContext'
 import { useAuth } from '../contexts/AuthContext'
 import WorkflowVisualization from './WorkflowVisualization'
@@ -60,7 +60,7 @@ const ChatbotPage = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const fetchState = async () => {
+  const fetchState = useCallback(async () => {
     if (!userId || !sessionId) return
     
     try {
@@ -74,7 +74,15 @@ const ChatbotPage = () => {
     } catch (error) {
       console.error('Error fetching customer journey:', error)
     }
-  }
+  }, [userId, sessionId])
+
+  // Fetch journey immediately when chatbot page opens (when "Start Now" is clicked)
+  // This effect runs on component mount and whenever userId/sessionId change
+  useEffect(() => {
+    if (userId && sessionId) {
+      fetchState()
+    }
+  }, [userId, sessionId, fetchState])
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading || !userId) return
@@ -138,10 +146,6 @@ const ChatbotPage = () => {
       sendMessage()
     }
   }
-
-  useEffect(() => {
-    fetchState()
-  }, [sessionId, userId])
 
   const handleDeleteAllSessions = async () => {
     if (!confirm('Are you sure you want to delete ALL sessions? This action cannot be undone.')) {
