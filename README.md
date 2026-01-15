@@ -187,7 +187,7 @@ The agent remembers your preferences across sessions, so returning customers get
 
 ## Cloud Deployment
 
-Deploy to AWS EC2 using Terraform for a production-ready setup.
+Deploy to AWS EC2 using Terraform
 
 **Prerequisites:**
 - AWS account with CLI configured
