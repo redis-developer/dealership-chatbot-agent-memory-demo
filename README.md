@@ -12,6 +12,7 @@ Car dealership AI agent that demonstrates how Redis Agent Memory Server enables 
 ## Table of Contents
 
 - [Demo Objectives](#demo-objectives)
+- [Tech Stack](#tech-stack)
 - [Prerequisites](#prerequisites)
 - [Getting Started](#getting-started)
   - [1. Clone the Repository](#1-clone-the-repository)
@@ -34,6 +35,20 @@ Car dealership AI agent that demonstrates how Redis Agent Memory Server enables 
 - **Short-term/working memory** using LangGraph checkpointers and Redis Agent Memory Server
 - **Conversation context retrieval** for personalized interactions across sessions
 - **Agentic orchestration** with LangGraph workflow stages (needs analysis → shortlist → test drive → financing)
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| **Memory** | [Redis Agent Memory Server](https://github.com/redis/agent-memory-server) | Long-term and working memory management |
+| **Database** | [Redis Cloud](https://redis.io/cloud/) | Vector storage and session persistence |
+| **Orchestration** | [LangGraph](https://langchain-ai.github.io/langgraph/) | Stateful workflow management |
+| **LLM Framework** | [LangChain](https://python.langchain.com/) | LLM integration and prompting |
+| **Backend** | [FastAPI](https://fastapi.tiangolo.com/) | Python REST API |
+| **Frontend** | [React 18](https://react.dev/) + TypeScript | User interface |
+| **Styling** | [Tailwind CSS](https://tailwindcss.com/) | UI styling |
+| **LLM** | [OpenAI GPT-4](https://openai.com/) | Language model |
+| **Deployment** | Docker + Terraform | Containerization and cloud infrastructure |
 
 ## Prerequisites
 
