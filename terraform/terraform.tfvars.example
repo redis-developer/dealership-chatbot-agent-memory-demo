@@ -1,0 +1,25 @@
+# AWS Configuration
+aws_region    = "us-east-1"
+instance_type = "t3.medium"
+key_name      = "your-aws-key-pair-name"
+
+# Application Configuration
+app_name    = "dealership-chatbot"
+environment = "dev"
+
+# Redis Cloud Configuration
+# Get this from your Redis Cloud console
+redis_url = "redis://default:password@your-redis-host:port"
+
+# OpenAI Configuration
+openai_api_key = "sk-your-openai-api-key"
+
+# Memory Server Configuration
+# Use localhost if running on the same EC2 instance
+memory_server_url = "http://localhost:8000"
+
+# Network Configuration (optional)
+allowed_ssh_cidr   = "0.0.0.0/0"  # Restrict to your IP for security
+vpc_cidr           = "10.0.0.0/16"
+public_subnet_cidr = "10.0.1.0/24"
+

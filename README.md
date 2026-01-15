@@ -23,7 +23,7 @@ Car dealership AI agent that demonstrates how Redis Agent Memory Server enables 
 - [Project Structure](#project-structure)
 - [Usage](#usage)
 - [Docker Commands Reference](#docker-commands-reference)
-- [Troubleshooting](#troubleshooting)
+- [Cloud Deployment](#cloud-deployment)
 - [Resources](#resources)
 - [Maintainers](#maintainers)
 - [License](#license)
@@ -68,12 +68,13 @@ Get the pre-built Docker image from [Docker Hub](https://hub.docker.com/r/redisl
 
 ```bash
 docker run -p 8000:8000 \
-  -e REDIS_URL=redis://default:password@your-redis-host:port \
-  -e OPENAI_API_KEY=your-key \
-  redislabs/agent-memory-server:latest
+  -e REDIS_URL=redis://default:<password>@<your-redis-host>:<port> \
+  -e OPENAI_API_KEY=<your-openai-api-key> \
+  redislabs/agent-memory-server:latest \
+  agent-memory api --host 0.0.0.0 --port 8000 --task-backend=asyncio
 ```
 
-> **Note:** This command starts only the Agent Memory Server API. You must have a running Redis instance accessible at the URL you provide.
+> **Note:** This command starts the Agent Memory Server API with asyncio task backend. You must have a running Redis instance (e.g., Redis Cloud) accessible at the URL you provide.
 
 ### 4. Run with Docker
 
@@ -109,16 +110,6 @@ npm run dev
 
 ![Landing Page](images/landing_page.png)
 ![Chatbot Interface](images/chat_window.png)
-
-### Components
-
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Workflow Orchestration** | LangGraph | Manages conversation state and guides customers through purchase journey |
-| **Short-Term Memory** | Redis Agent Memory Server | Maintains working memory of ongoing conversation |
-| **Long-Term Memory** | Redis Agent Memory Server | Stores customer preferences and history across sessions |
-| **Frontend** | React 18 + TypeScript + Tailwind | Responsive dealership UI with chatbot interface |
-| **Backend** | FastAPI + Python | API server for chat processing |
 
 ### Architecture Flow
 
@@ -163,6 +154,11 @@ dealership-chatbot-agent-memory-demo/
 ├── docker/
 │   ├── Dockerfile.backend
 │   └── Dockerfile.frontend
+├── terraform/
+│   ├── main.tf               # AWS infrastructure
+│   ├── variables.tf          # Variable definitions
+│   ├── outputs.tf            # Output definitions
+│   └── user_data.sh          # EC2 bootstrap script
 ├── docker-compose.yml
 └── README.md
 ```
@@ -189,21 +185,27 @@ The agent remembers your preferences across sessions, so returning customers get
 | `docker-compose logs -f backend` | View backend logs |
 | `docker-compose ps` | List running containers |
 
-## Troubleshooting
+## Cloud Deployment
 
-### Backend not connecting to memory server
-Ensure the Agent Memory Server is running and accessible. The backend uses `host.docker.internal:8000` to connect to services on the host machine.
+Deploy to AWS EC2 using Terraform for a production-ready setup.
 
-### Frontend can't reach backend
-The frontend is built with `VITE_API_URL=http://localhost:8001`. If you need to change this, update the build arg in `docker-compose.yml`.
+**Prerequisites:**
+- AWS account with CLI configured
+- Terraform installed (>= 1.0)
+- SSH key pair in AWS EC2
 
-### Port conflicts
-If ports 3000 or 8001 are already in use, modify the port mappings in `docker-compose.yml`:
-```yaml
-ports:
-  - "3001:80"   # Change frontend port
-  - "8002:8001" # Change backend port
+**Quick Start:**
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with your values
+terraform init
+terraform plan
+terraform apply
 ```
+
+**Full deployment guide:** See [terraform/README.md](terraform/README.md) for detailed instructions.
 
 ## Resources
 
