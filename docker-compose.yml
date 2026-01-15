@@ -1,8 +1,8 @@
 services:
   backend:
     build:
-      context: .
-      dockerfile: Dockerfile.backend
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
     container_name: autoemporium-backend
     ports:
       - "8001:8001"
@@ -11,7 +11,7 @@ services:
       - MEMORY_SERVER_URL=${MEMORY_SERVER_URL:-http://host.docker.internal:8000}
       - REDIS_URL=${REDIS_URL}
     volumes:
-      - ./logs:/app/logs
+      - ./backend/logs:/app/logs
       - ./.env:/app/.env
     restart: unless-stopped
     healthcheck:
@@ -25,8 +25,8 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: Dockerfile.frontend
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
       args:
         - VITE_API_URL=http://localhost:8001
     container_name: autoemporium-frontend
@@ -41,4 +41,3 @@ services:
 networks:
   autoemporium-network:
     driver: bridge
-

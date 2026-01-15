@@ -12,7 +12,7 @@ import re
 import redis
 from datetime import datetime, timedelta
 from agent_memory_client import create_memory_client, MemoryAPIClient, MemoryClientConfig
-from agent_memory_client.models import WorkingMemory, MemoryMessage
+from agent_memory_client.models import WorkingMemory, MemoryMessage, MemoryStrategyConfig
 import asyncio
 
 load_dotenv()
@@ -94,12 +94,34 @@ logger.info("LLM initialized with model: gpt-3.5-turbo")
 memory_server_url = os.getenv("MEMORY_SERVER_URL", "http://localhost:8000")
 memory_client = None
 
+# Custom memory extraction strategy for dealership chatbot
+# Ensures car brand, model, test drive scheduling, stage, and preferences are always extracted
+DEALERSHIP_MEMORY_STRATEGY = MemoryStrategyConfig(
+    strategy="custom",
+    config={
+        "custom_prompt": """
+Extract dealership-related information from: {message}
+
+Focus on extracting the following information:
+1. Car brand name (e.g., Mercedes-Benz, BMW, Toyota, Honda, Ford, etc.)
+2. Car model name (e.g., GLS, X5, Camry, Accord, F-150, etc.)
+3. Test drive scheduling information (scheduled date, time, completed status, interest in test drive)
+4. Purchase stage (needs_analysis, shortlist, test_drive, financing, purchase_complete, etc.)
+5. Customer preferences (vehicle type preferences like SUV, sedan, truck; fuel preferences like gas, electric, hybrid; seating requirements; transmission preferences; budget range; color preferences; etc.)
+
+Return JSON with memories array containing type, text, topics, and entities for each extracted fact.
+Current datetime: {current_datetime}
+"""
+    }
+)
+
 # Note: create_memory_client is async, so we'll create it lazily when needed
 # For now, we'll use the sync initialization pattern
 try:
     config = MemoryClientConfig(base_url=memory_server_url)
     memory_client = MemoryAPIClient(config=config)
     logger.info(f"Agent Memory Client initialized successfully - Server: {memory_server_url}")
+    logger.info("Custom dealership memory strategy configured")
 except Exception as e:
     logger.warning(f"Failed to initialize Agent Memory Client: {str(e)}. Working memory will not be available.")
     memory_client = None
@@ -827,8 +849,16 @@ def save_to_working_memory(state: State) -> State:
             
             return loop.run_until_complete(coro)
         
-        # Append messages to working memory using the convenience method
-        async def append_messages():
+        # Append messages to working memory with custom strategy
+        async def append_with_strategy():
+            # Get or create working memory - this sets strategy for new sessions
+            created, working_memory = await memory_client.get_or_create_working_memory(
+                session_id=session_id,
+                user_id=user_id,
+                long_term_memory_strategy=DEALERSHIP_MEMORY_STRATEGY
+            )
+            
+            # Append messages - append_messages_to_working_memory will use the strategy we just set
             result = await memory_client.append_messages_to_working_memory(
                 session_id=session_id,
                 messages=messages_to_append,
@@ -837,7 +867,7 @@ def save_to_working_memory(state: State) -> State:
             logger.info(f"Saved conversation turn to working memory - Session: {session_id}, User: {user_id}")
             return result
         
-        result = run_async(append_messages())
+        result = run_async(append_with_strategy())
         if result:
             logger.debug(f"Working memory updated successfully for session {session_id}")
         

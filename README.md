@@ -1,91 +1,124 @@
 # Car Dealership Agent with Redis Agent Memory Server
 
-Car dealership AI agent demonstrates how Redis Agent Memory Server enables long-term memory and conversation context retrieval, allowing the agent to remember customer preferences across sessions and provide personalized car purchase assistance.
+<p>
+  <a href="https://github.com/redis/agent-memory-server"><img src="https://img.shields.io/badge/Redis-Agent%20Memory%20Server-red?logo=redis" alt="Redis Agent Memory Server"></a>
+  <a href="https://python.langchain.com/"><img src="https://img.shields.io/badge/LangChain-Powered-blue" alt="LangChain"></a>
+  <a href="https://langchain-ai.github.io/langgraph/"><img src="https://img.shields.io/badge/LangGraph-Workflow-green" alt="LangGraph"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
+
+Car dealership AI agent that demonstrates how Redis Agent Memory Server enables long-term memory and conversation context retrieval, allowing the agent to remember customer preferences across sessions and provide personalized car purchase assistance.
 
 ## Table of Contents
 
 - [Demo Objectives](#demo-objectives)
-- [Setup](#setup)
-- [Running the Demo](#running-the-demo)
+- [Prerequisites](#prerequisites)
+- [Getting Started](#getting-started)
+  - [1. Clone the Repository](#1-clone-the-repository)
+  - [2. Environment Configuration](#2-environment-configuration)
+  - [3. Start Agent Memory Server](#3-start-agent-memory-server)
+  - [4. Run with Docker](#4-run-with-docker)
+  - [5. Run for Development](#5-run-for-development)
 - [Architecture](#architecture)
+- [Project Structure](#project-structure)
+- [Usage](#usage)
+- [Docker Commands Reference](#docker-commands-reference)
+- [Troubleshooting](#troubleshooting)
 - [Resources](#resources)
 - [Maintainers](#maintainers)
 - [License](#license)
 
 ## Demo Objectives
 
-- Demonstrate long-term memory storage using Redis Agent Memory Server
-- Demonstrate short-term/working memory storage using LangGraph checkpointers and Redis Agent Memory Server
-- Showcase conversation context retrieval for personalized interactions
-- Show agentic orchestration with LangGraph workflow stages
+- **Long-term memory storage** using Redis Agent Memory Server for persistent customer preferences
+- **Short-term/working memory** using LangGraph checkpointers and Redis Agent Memory Server
+- **Conversation context retrieval** for personalized interactions across sessions
+- **Agentic orchestration** with LangGraph workflow stages (needs analysis → shortlist → test drive → financing)
 
-## Setup
-
-### Dependencies
+## Prerequisites
 
 - Python 3.11+
 - Node.js 18+
-- Docker (for running frontend and backend together)
+- Docker and Docker Compose
+- Redis Cloud account or local Redis instance
+- OpenAI API key
 
-### Configuration
+## Getting Started
 
-Clone the repository:
+### 1. Clone the Repository
 
 ```bash
 git clone <repository-url>
 cd dealership-chatbot-agent-memory-demo
 ```
 
+### 2. Environment Configuration
+
 Create a `.env` file in the project root:
 
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
-REDIS_URL=<redis-cloud-url>
+REDIS_URL=redis://default:password@your-redis-host:port
 MEMORY_SERVER_URL=http://localhost:8000
 ```
 
-## Running the Demo
+### 3. Start Agent Memory Server
 
-![Landing Page](images/landing_page.png)
-![Chatbot Interface](images/chat_window.png)
-
-
-### 1. Agent Memory Server Setup
-
-Get the Pre-built Docker Images from https://hub.docker.com/r/redislabs/agent-memory-server
-
-Quick Start: Run the API Server (Requires Separate Redis)
+Get the pre-built Docker image from [Docker Hub](https://hub.docker.com/r/redislabs/agent-memory-server):
 
 ```bash
 docker run -p 8000:8000 \
-  -e REDIS_URL=<redis-cloud-url> \
+  -e REDIS_URL=redis://default:password@your-redis-host:port \
   -e OPENAI_API_KEY=your-key \
   redislabs/agent-memory-server:latest
 ```
-Notes:
-This command starts only the Agent Memory Server API. You must have a running Redis instance accessible at the URL you provide.
-For more advanced configuration, see the full documentation: https://github.com/redis-developer/agent-memory-server
 
-### 2. Docker Setup
+> **Note:** This command starts only the Agent Memory Server API. You must have a running Redis instance accessible at the URL you provide.
+
+### 4. Run with Docker
+
+Build and start all services:
 
 ```bash
-# Start all services with Docker
 docker-compose up --build
+```
 
-# Access the application
-# Frontend: http://localhost:3000
-# Backend: http://localhost:8001
+Access the application:
+- **Frontend:** http://localhost:3000
+- **Backend API:** http://localhost:8001
+
+### 5. Run for Development
+
+**Backend:**
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
+```
+
+**Frontend:**
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
 ## Architecture
 
-**Workflow Orchestration (LangGraph)**: Manages conversation state and guides customers through the car purchase journey
+![Landing Page](images/landing_page.png)
+![Chatbot Interface](images/chat_window.png)
 
-**Short-Term Memory (Redis Agent Memory Server)**: Maintains working memory of the ongoing conversation
+### Components
 
-**Long-Term Memory (Redis Agent Memory Server)**: Semantic memory to stores customer preferences and conversation history across sessions
-
-**Modern Frontend (React 18 + TypeScript + Tailwind)**: Beautiful, responsive dealership UI with full-page chatbot interface
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **Workflow Orchestration** | LangGraph | Manages conversation state and guides customers through purchase journey |
+| **Short-Term Memory** | Redis Agent Memory Server | Maintains working memory of ongoing conversation |
+| **Long-Term Memory** | Redis Agent Memory Server | Stores customer preferences and history across sessions |
+| **Frontend** | React 18 + TypeScript + Tailwind | Responsive dealership UI with chatbot interface |
+| **Backend** | FastAPI + Python | API server for chat processing |
 
 ### Architecture Flow
 
@@ -108,13 +141,69 @@ User Query
          ├→ Test Drive Completed? → Suggest Financing
          └→ Financing Discussed? → Prepare for Delivery
          ↓
-    [Save to Memory] → Store conversation and preferences to working & long-term memory
+    [Save to Memory] → Store conversation and preferences
          ↓
     Response to User
-         ↓
-    [UI Updates] → Update workflow visualization
 ```
 
+## Project Structure
+
+```
+dealership-chatbot-agent-memory-demo/
+├── backend/
+│   ├── main.py              # FastAPI application
+│   ├── orchestrator.py      # LangGraph workflow
+│   └── requirements.txt     # Python dependencies
+├── frontend/
+│   ├── src/
+│   │   ├── components/      # React components
+│   │   └── contexts/        # React contexts
+│   ├── package.json
+│   └── nginx.conf           # Production server config
+├── docker/
+│   ├── Dockerfile.backend
+│   └── Dockerfile.frontend
+├── docker-compose.yml
+└── README.md
+```
+
+## Usage
+
+1. **Start a conversation** by logging in with any username
+2. **Share your preferences** (e.g., "I'm looking for a 5-seater SUV")
+3. **Browse recommendations** based on your requirements
+4. **Select a model** and schedule a test drive
+5. **Complete the journey** through financing options
+
+The agent remembers your preferences across sessions, so returning customers get personalized recommendations immediately.
+
+## Docker Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `docker-compose up` | Start all services |
+| `docker-compose up -d` | Start in background |
+| `docker-compose up --build` | Rebuild and start |
+| `docker-compose down` | Stop all services |
+| `docker-compose logs -f` | View all logs |
+| `docker-compose logs -f backend` | View backend logs |
+| `docker-compose ps` | List running containers |
+
+## Troubleshooting
+
+### Backend not connecting to memory server
+Ensure the Agent Memory Server is running and accessible. The backend uses `host.docker.internal:8000` to connect to services on the host machine.
+
+### Frontend can't reach backend
+The frontend is built with `VITE_API_URL=http://localhost:8001`. If you need to change this, update the build arg in `docker-compose.yml`.
+
+### Port conflicts
+If ports 3000 or 8001 are already in use, modify the port mappings in `docker-compose.yml`:
+```yaml
+ports:
+  - "3001:80"   # Change frontend port
+  - "8002:8001" # Change backend port
+```
 
 ## Resources
 
@@ -122,11 +211,12 @@ User Query
 - [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
 - [LangChain Documentation](https://python.langchain.com/)
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [Redis Cloud](https://redis.io/cloud/)
 
 ## Maintainers
 
-Bhavana Giri — bhavanagiri
+- **Bhavana Giri** — [@bhavanagiri](https://github.com/bhavanagiri)
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

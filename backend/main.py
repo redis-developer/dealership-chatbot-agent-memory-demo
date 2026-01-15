@@ -177,4 +177,4 @@ if __name__ == "__main__":
     logger.info("API will be available at http://localhost:8001")
     logger.info("Frontend should connect to http://localhost:8001/chat")
     uvicorn.run(app, host="0.0.0.0", port=8001, log_config=None)
-  
+
