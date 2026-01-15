@@ -173,17 +173,6 @@ dealership-chatbot-agent-memory-demo/
 
 The agent remembers your preferences across sessions, so returning customers get personalized recommendations immediately.
 
-## Docker Commands Reference
-
-| Command | Description |
-|---------|-------------|
-| `docker-compose up` | Start all services |
-| `docker-compose up -d` | Start in background |
-| `docker-compose up --build` | Rebuild and start |
-| `docker-compose down` | Stop all services |
-| `docker-compose logs -f` | View all logs |
-| `docker-compose logs -f backend` | View backend logs |
-| `docker-compose ps` | List running containers |
 
 ## Cloud Deployment
 
