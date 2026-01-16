@@ -1,5 +1,5 @@
 # AWS Configuration
-aws_region    = "us-east-1"
+aws_region    = "ap-southeast-2"
 instance_type = "t3.medium"
 key_name      = "your-aws-key-pair-name"
 
@@ -9,10 +9,10 @@ environment = "dev"
 
 # Redis Cloud Configuration
 # Get this from your Redis Cloud console
-redis_url = "redis://default:password@your-redis-host:port"
+redis_url = "redis://default:<password>@<your-redis-host>:<port>"
 
 # OpenAI Configuration
-openai_api_key = "sk-your-openai-api-key"
+openai_api_key = "<your-openai-api-key>"
 
 # Memory Server Configuration
 # Use localhost if running on the same EC2 instance
