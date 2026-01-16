@@ -49,11 +49,15 @@ git clone https://github.com/redis-developer/dealership-chatbot-agent-memory-dem
 # Get public IP
 PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
 
+# Update docker-compose.yml to use public IP for frontend API URL
+sed -i "s|VITE_API_URL=http://localhost:8001|VITE_API_URL=http://$PUBLIC_IP:8001|g" $APP_DIR/docker-compose.yml
+
 # Create .env file
 cat > $APP_DIR/.env <<EOF
 OPENAI_API_KEY=${openai_api_key}
 REDIS_URL=${redis_url}
-MEMORY_SERVER_URL=${memory_server_url}
+MEMORY_SERVER_URL=http://172.17.0.1:8000
+CORS_ORIGINS=http://$PUBLIC_IP:3000,http://localhost:3000
 EOF
 
 # Set permissions
