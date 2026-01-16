@@ -25,7 +25,7 @@ output "memory_server_url" {
 
 output "ssh_command" {
   description = "SSH command to connect to the instance"
-  value       = "ssh -i <your-key.pem> ec2-user@${aws_eip.app.public_ip}"
+  value       = "ssh -i <your-key.pem> ubuntu@${aws_eip.app.public_ip}"
 }
 
 output "vpc_id" {

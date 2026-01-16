@@ -64,7 +64,7 @@ ssh_command       = "ssh -i <your-key.pem> ec2-user@<public-ip>"
 The deployment creates:
 
 - **VPC** with public subnet and internet gateway
-- **EC2 instance** (Amazon Linux 2023) with Docker
+- **EC2 instance** (Ubuntu 22.04 LTS) with Docker
 - **Security group** allowing ports 22, 80, 443, 3000, 8000, 8001
 - **Elastic IP** for stable public access
 
@@ -77,7 +77,7 @@ Services running on EC2:
 ## SSH Access
 
 ```bash
-ssh -i your-key.pem ec2-user@<public-ip>
+ssh -i your-key.pem ubuntu@<public-ip>
 ```
 
 ## View Logs
@@ -93,20 +93,20 @@ docker ps
 
 # View application logs
 cd /opt/dealership-chatbot
-docker-compose logs -f
+docker compose logs -f
 ```
 
 ## Update Application
 
 ```bash
 # SSH into instance
-ssh -i your-key.pem ec2-user@<public-ip>
+ssh -i your-key.pem ubuntu@<public-ip>
 
 # Pull latest code and restart
 cd /opt/dealership-chatbot
 git pull
-docker-compose down
-docker-compose up -d --build
+docker compose down
+docker compose up -d --build
 ```
 
 ## Destroy Infrastructure

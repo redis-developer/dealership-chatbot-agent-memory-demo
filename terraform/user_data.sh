@@ -6,36 +6,58 @@ exec > >(tee /var/log/user-data.log) 2>&1
 echo "Starting user data script at $(date)"
 
 # Update system
-dnf update -y
+apt-get update -y
+apt-get upgrade -y
 
-# Install Docker
-dnf install -y docker git
-systemctl start docker
-systemctl enable docker
+# Install required packages
+apt-get install -y \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release \
+    git
 
-# Install Docker Compose
-curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-chmod +x /usr/local/bin/docker-compose
+# Install Docker with buildx plugin included
+if ! command -v docker &> /dev/null; then
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    apt-get update -y
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    systemctl enable docker
+    systemctl start docker
+    usermod -aG docker ubuntu
+fi
 
-# Add ec2-user to docker group
-usermod -aG docker ec2-user
+# Create docker-compose alias for compatibility
+if ! command -v docker-compose &> /dev/null && docker compose version &> /dev/null; then
+    cat > /usr/local/bin/docker-compose <<'EOF'
+#!/bin/bash
+docker compose "$@"
+EOF
+    chmod +x /usr/local/bin/docker-compose
+fi
 
 # Create application directory
-mkdir -p /opt/${app_name}
-cd /opt/${app_name}
+APP_DIR="/opt/${app_name}"
+mkdir -p $APP_DIR
+cd $APP_DIR
 
-# Clone the repository
+# Clone repository
 git clone https://github.com/redis-developer/dealership-chatbot-agent-memory-demo.git .
 
+# Get public IP
+PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+
 # Create .env file
-cat > .env << 'EOF'
+cat > $APP_DIR/.env <<EOF
 OPENAI_API_KEY=${openai_api_key}
 REDIS_URL=${redis_url}
 MEMORY_SERVER_URL=${memory_server_url}
 EOF
 
 # Set permissions
-chown -R ec2-user:ec2-user /opt/${app_name}
+chown -R ubuntu:ubuntu $APP_DIR
 
 # Start Agent Memory Server
 docker run -d \
@@ -52,11 +74,35 @@ echo "Waiting for Agent Memory Server to start..."
 sleep 10
 
 # Build and start application services
-cd /opt/${app_name}
-docker-compose up -d --build
+cd $APP_DIR
+docker compose down || true
+docker compose build --no-cache
+docker compose up -d
+
+# Create systemd service for auto-start on reboot
+cat > /etc/systemd/system/${app_name}.service <<'SERVICE_EOF'
+[Unit]
+Description=Dealership Chatbot Application
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/${app_name}
+ExecStart=/bin/bash -c 'cd /opt/${app_name} && docker compose up -d'
+ExecStop=/bin/bash -c 'cd /opt/${app_name} && docker compose down'
+User=root
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+systemctl daemon-reload
+systemctl enable ${app_name}.service
 
 echo "Deployment completed at $(date)"
-echo "Frontend: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):3000"
-echo "Backend: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8001"
-echo "Memory Server: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8000"
-
+echo "Public IP: $PUBLIC_IP"
+echo "Frontend: http://$PUBLIC_IP:3000"
+echo "Backend: http://$PUBLIC_IP:8001"
+echo "Memory Server: http://$PUBLIC_IP:8000"
