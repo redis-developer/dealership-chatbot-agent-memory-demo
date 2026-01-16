@@ -123,6 +123,7 @@ npm run dev
 
 ## Architecture
 
+![Architecture_diagram](images/dealership%20demo%20agent%20memory%20(1).jpg)
 ![Landing Page](images/landing_page.png)
 ![Chatbot Interface](images/chat_window.png)
 
